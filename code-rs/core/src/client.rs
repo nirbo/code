@@ -278,6 +278,11 @@ impl ModelClient {
         }
     }
 
+    /// Get the wire API protocol for the current provider
+    pub fn wire_api(&self) -> WireApi {
+        self.provider.wire_api
+    }
+
     fn current_reasoning_param(
         &self,
         family: &ModelFamily,

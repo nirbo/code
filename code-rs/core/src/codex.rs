@@ -6201,6 +6201,7 @@ async fn run_turn(
             log_tag: Some("codex/turn".to_string()),
             session_id_override: None,
             model_descriptions: sess.model_descriptions.clone(),
+            wire_api: Some(tc.client.wire_api()),
         };
 
         sess.apply_remote_model_overrides(&mut prompt).await;

@@ -5,6 +5,7 @@ use crate::config_types::TextVerbosity as TextVerbosityConfig;
 use crate::environment_context::EnvironmentContext;
 use crate::error::Result;
 use crate::model_family::ModelFamily;
+use crate::model_provider_info::WireApi;
 use crate::openai_tools::OpenAiTool;
 use crate::protocol::RateLimitSnapshotEvent;
 use crate::protocol::TokenUsage;
@@ -92,6 +93,10 @@ pub struct Prompt {
 
     /// Optional override for the model guide placeholder in the developer prompt.
     pub model_descriptions: Option<String>,
+
+    /// Wire API protocol for the model provider. Determines role mapping for messages.
+    /// When set to Chat, "developer" role messages are mapped to "system" role.
+    pub wire_api: Option<WireApi>,
 }
 
 impl Default for Prompt {
@@ -113,6 +118,7 @@ impl Default for Prompt {
             log_tag: None,
             session_id_override: None,
             model_descriptions: None,
+            wire_api: None,
         }
     }
 }
@@ -169,14 +175,24 @@ impl Prompt {
         })
     }
 
+    /// Determine the appropriate role name based on the wire_api protocol.
+    /// When using Chat API (which doesn't support "developer" role), use "system" instead.
+    fn developer_role_name(&self) -> &'static str {
+        match self.wire_api {
+            Some(WireApi::Chat) => "system",
+            _ => "developer",
+        }
+    }
+
     pub(crate) fn get_formatted_input(&self) -> Vec<ResponseItem> {
         let mut input_with_instructions =
             Vec::with_capacity(self.input.len() + self.status_items.len() + 3);
         if self.include_additional_instructions {
+            let developer_role = self.developer_role_name();
             let developer_text = self.additional_instructions().into_owned();
             input_with_instructions.push(ResponseItem::Message {
                 id: None,
-                role: "developer".to_string(),
+                role: developer_role.to_string(),
                 content: vec![ContentItem::InputText { text: developer_text }],
             });
             for message in &self.prepend_developer_messages {
@@ -186,7 +202,7 @@ impl Prompt {
                 }
                 input_with_instructions.push(ResponseItem::Message {
                     id: None,
-                    role: "developer".to_string(),
+                    role: developer_role.to_string(),
                     content: vec![ContentItem::InputText {
                         text: trimmed.to_string(),
                     }],
