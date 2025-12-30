@@ -7,6 +7,35 @@
 
 - (none)
 
+## [0.6.20] - 2025-12-30
+
+- Auto Drive: keep retrying after errors so runs recover instead of stopping early. (7f6c12e8)
+- Auto Drive: schedule restarts without depending on Tokio to avoid stalled recoveries. (bae785e9)
+
+## [0.6.19] - 2025-12-29
+
+- Agents: default built-in slugs to code-gpt-5.2-codex for faster, higher-quality automation. (8afe9b8c)
+- Agents: expand GPT-5 alias coverage and docs so configs map cleanly to the new defaults. (8afe9b8c)
+
+## [0.6.18] - 2025-12-28
+
+- TUI: add `/skills` slash command to list available skills inline. (7087feb)
+- Exec: handle missing wait output to keep execution results consistent. (d1cc1a2)
+- Auto Drive: stop runs after fatal errors to avoid hanging sessions. (a481b54)
+
+## [0.6.17] - 2025-12-28
+
+- TUI2: improve transcript selection with multi-click, drag start, copy shortcut, and corruption fixes when copying offscreen text. (0130a2fa, 28285493, 414fbe0d, 310f2114, 7d0c5c7b)
+- Auto Drive: keep agent runs alive and clamp overlays to avoid misaligned prompts. (eafae4bc, 7b28c36b)
+- Config: honor /etc/codex/config.toml, in-repo config sources, and project_root_markers for workspace detection. (e27d9bd8, 8ff16a77, 314937fb)
+- Exec/CLI: limit unified exec output size and improve ripgrep download diagnostics for clearer failures. (fb24c47b, f2b740c9)
+- Performance: cache history render requests and cap redraw scheduling to 60fps to reduce TUI CPU usage. (72b6650f, 96a65ff0)
+
+## [0.6.16] - 2025-12-25
+
+- Auto Drive: tighten timeboxed coordinator guidance so runs lead with authoritative verifiers and outcome-only directives. (d3efecb)
+- CLI: expand timeboxed exec guidance to force early acceptance checks and proof before finishing. (d3efecb)
+
 ## [0.6.15] - 2025-12-24
 
 - Exec: add timeboxed auto-exec guidance to keep runs bounded. (8dbfdbba)

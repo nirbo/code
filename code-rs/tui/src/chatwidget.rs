@@ -147,8 +147,8 @@ mod agent_summary_counts_tests {
     #[test]
     fn missing_builtins_default_to_disabled() {
         let agents = vec![
-            make_agent("code-gpt-5.1-codex-max", true),
-            make_agent("code-gpt-5.1", true),
+            make_agent("code-gpt-5.2-codex", true),
+            make_agent("code-gpt-5.2", true),
         ];
 
         let (enabled, total) = agent_summary_counts(&agents);
@@ -161,7 +161,7 @@ mod agent_summary_counts_tests {
     #[test]
     fn custom_agents_are_counted() {
         let agents = vec![
-            make_agent("code-gpt-5.1-codex-max", true),
+            make_agent("code-gpt-5.2-codex", true),
             make_agent("my-custom-agent", false),
         ];
 
@@ -198,7 +198,6 @@ use code_auto_drive_core::{
     AutoTurnReviewState,
     AutoResolveState,
     AutoResolvePhase,
-    AUTO_RESTART_MAX_ATTEMPTS,
     AUTO_RESOLVE_REVIEW_FOLLOWUP,
     CoordinatorContext,
     CoordinatorRouterResponse,
@@ -1084,6 +1083,7 @@ use crate::history::state::{
     AssistantStreamState,
     DiffLineKind,
     DiffRecord,
+    ExecStatus,
     ExecWaitNote,
     HistoryDomainEvent,
     HistoryDomainRecord,
@@ -1571,6 +1571,14 @@ pub(crate) enum TurnOrigin {
     Developer,
 }
 
+#[derive(Clone)]
+struct RenderRequestSeed {
+    history_id: HistoryId,
+    use_cache: bool,
+    fallback_lines: Option<Rc<Vec<Line<'static>>>>,
+    kind: RenderRequestKind,
+}
+
 pub(crate) struct ChatWidget<'a> {
     app_event_tx: AppEventSender,
     code_op_tx: UnboundedSender<Op>,
@@ -1582,6 +1590,9 @@ pub(crate) struct ChatWidget<'a> {
     history_cells: Vec<Box<dyn HistoryCell>>, // Store all history in memory
     history_cell_ids: Vec<Option<HistoryId>>,
     history_render: HistoryRenderState,
+    render_request_cache: RefCell<Vec<RenderRequestSeed>>,
+    render_request_cache_dirty: Cell<bool>,
+    history_prefix_append_only: Cell<bool>,
     render_theme_epoch: u64,
     history_state: HistoryState,
     history_snapshot_dirty: bool,
@@ -2756,6 +2767,24 @@ fn wait_exec_call_id_from_params(params: Option<&String>) -> Option<ExecCallId> 
     params
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
         .and_then(|json| json.get("call_id").and_then(|v| v.as_str()).map(|s| ExecCallId(s.to_string())))
+}
+
+fn wait_result_missing_background_job(message: &str) -> bool {
+    let trimmed = message.trim();
+    trimmed.starts_with("No background job found for call_id=")
+        || trimmed == "No completed background job found"
+}
+
+fn wait_result_interrupted(message: &str) -> bool {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.contains("wait ended due to new user message")
+        || lower.contains("wait ended because the session was interrupted")
+        || lower.contains("wait interrupted so the assistant can adapt")
+        || (lower.contains("background job") && lower.contains("still running"))
 }
 
 impl std::fmt::Display for ExecCallId {
@@ -4752,6 +4781,111 @@ impl ChatWidget<'_> {
     /// Clear memoized cell heights (called when history/content changes)
     fn invalidate_height_cache(&mut self) {
         self.history_render.invalidate_height_cache();
+        self.mark_render_requests_dirty();
+        self.history_prefix_append_only.set(false);
+    }
+
+    fn mark_render_requests_dirty(&self) {
+        self.render_request_cache_dirty.set(true);
+    }
+
+    fn rebuild_render_request_cache(&self) {
+        let mut cache = self.render_request_cache.borrow_mut();
+        cache.clear();
+        cache.reserve(self.history_cells.len());
+
+        let reasoning_visible = self.is_reasoning_shown();
+        for (idx, cell) in self.history_cells.iter().enumerate() {
+            let (history_id, has_record) = if let Some(Some(id)) = self.history_cell_ids.get(idx) {
+                let exists = self.history_state.index_of(*id).is_some();
+                (*id, exists)
+            } else {
+                (HistoryId::ZERO, false)
+            };
+
+            let cell_has_custom_render = cell.has_custom_render();
+            let is_streaming = cell
+                .as_any()
+                .downcast_ref::<crate::history_cell::StreamingContentCell>()
+                .is_some();
+
+            let mut use_cache = history_id != HistoryId::ZERO
+                && has_record
+                && !cell_has_custom_render
+                && !cell.is_animating()
+                && !is_streaming;
+
+            let mut kind = RenderRequestKind::Legacy;
+            if history_id != HistoryId::ZERO {
+                if let Some(record) = self.history_state.record(history_id) {
+                    match record {
+                        HistoryRecord::Exec(_) => {
+                            kind = RenderRequestKind::Exec { id: history_id };
+                        }
+                        HistoryRecord::MergedExec(_) => {
+                            kind = RenderRequestKind::MergedExec { id: history_id };
+                        }
+                        HistoryRecord::Explore(_) => {
+                            let hold_header = self.rendered_explore_should_hold(idx);
+                            kind = RenderRequestKind::Explore {
+                                id: history_id,
+                                hold_header,
+                                full_detail: reasoning_visible,
+                            };
+                        }
+                        HistoryRecord::Diff(_) => {
+                            kind = RenderRequestKind::Diff { id: history_id };
+                        }
+                        HistoryRecord::AssistantStream(stream_state) => {
+                            kind = RenderRequestKind::Streaming { id: history_id };
+                            if stream_state.in_progress {
+                                use_cache = false;
+                            }
+                        }
+                        HistoryRecord::AssistantMessage(_) => {
+                            kind = RenderRequestKind::Assistant { id: history_id };
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            let mut fallback_lines: Option<Rc<Vec<Line<'static>>>> = None;
+            if !cell_has_custom_render && !is_streaming {
+                if history_id != HistoryId::ZERO {
+                    if let Some(record) = self.history_state.record(history_id) {
+                        if let Some(lines) = self.fallback_lines_for_record(cell.as_ref(), record) {
+                            let cached = self
+                                .history_render
+                                .cached_fallback_lines(history_id, || lines);
+                            fallback_lines = Some(cached);
+                        }
+                    }
+                } else {
+                    let lines = cell.display_lines_trimmed();
+                    if !lines.is_empty() {
+                        fallback_lines = Some(Rc::new(lines));
+                    }
+                }
+            }
+
+            cache.push(RenderRequestSeed {
+                history_id,
+                use_cache,
+                fallback_lines,
+                kind,
+            });
+        }
+
+        self.render_request_cache_dirty.set(false);
+    }
+
+    fn ensure_render_request_cache(&self) {
+        if self.render_request_cache_dirty.get()
+            || self.render_request_cache.borrow().len() != self.history_cells.len()
+        {
+            self.rebuild_render_request_cache();
+        }
     }
 
     fn fallback_lines_for_record(
@@ -5664,7 +5798,7 @@ impl ChatWidget<'_> {
             self.request_redraw();
         }
 
-        // Fatal error path: show an error cell and clear running state.
+        // Error path: show an error cell and clear running state.
         self.clear_resume_placeholder();
         let key = self.next_internal_key();
         let state = history_cell::new_error_event(message.clone());
@@ -5675,15 +5809,19 @@ impl ChatWidget<'_> {
             "epilogue",
             Some(HistoryDomainRecord::Plain(state)),
         );
+        let should_recover_auto = self.auto_state.is_active();
         self.bottom_pane.set_task_running(false);
         // Ensure any running exec/tool cells are finalized so spinners don't linger
-        // after fatal errors.
+        // after errors.
         self.finalize_all_running_as_interrupted();
         self.stream.clear_all();
         self.stream_state.drop_streaming = false;
         self.agents_ready_to_start = false;
         self.active_task_ids.clear();
         self.maybe_hide_spinner();
+        if should_recover_auto {
+            self.auto_pause_for_transient_failure(message);
+        }
         self.mark_needs_redraw();
     }
 
@@ -5976,6 +6114,9 @@ impl ChatWidget<'_> {
             background_review_guard: None,
             processed_auto_review_agents: HashSet::new(),
             pending_turn_descriptor: None,
+            render_request_cache: RefCell::new(Vec::new()),
+            render_request_cache_dirty: Cell::new(true),
+            history_prefix_append_only: Cell::new(true),
             pending_auto_turn_config: None,
             overall_task_status: "preparing".to_string(),
             active_plan_title: None,
@@ -6333,6 +6474,9 @@ impl ChatWidget<'_> {
             background_review_guard: None,
             processed_auto_review_agents: HashSet::new(),
             pending_turn_descriptor: None,
+            render_request_cache: RefCell::new(Vec::new()),
+            render_request_cache_dirty: Cell::new(true),
+            history_prefix_append_only: Cell::new(true),
             pending_auto_turn_config: None,
             overall_task_status: "preparing".to_string(),
             active_plan_title: None,
@@ -7090,6 +7234,76 @@ impl ChatWidget<'_> {
 
         // Max scroll is content height minus available height
         total_height.saturating_sub(content_area_height)
+    }
+
+    fn try_append_prefix_fast(
+        &self,
+        render_requests: &[RenderRequest<'_>],
+        render_settings: RenderSettings,
+        prefix_width: u16,
+    ) -> bool {
+        if !self.history_prefix_append_only.get() {
+            return false;
+        }
+        if !self
+            .history_render
+            .can_append_prefix(prefix_width, render_requests.len())
+        {
+            return false;
+        }
+        let prev_count = self.history_render.last_prefix_count();
+        if prev_count == 0 || render_requests.len() != prev_count.saturating_add(1) {
+            return false;
+        }
+        let history_count = self.history_cells.len();
+        if history_count < 2 {
+            return false;
+        }
+        if history_count != self
+            .history_render
+            .last_history_count()
+            .saturating_add(1)
+        {
+            return false;
+        }
+        if render_requests.len() != history_count {
+            return false;
+        }
+        let history_tail_start = history_count - 2;
+        let tail = &render_requests[history_tail_start..history_count];
+        if tail.len() != 2 {
+            return false;
+        }
+        let cells = self
+            .history_render
+            .visible_cells(&self.history_state, tail, render_settings);
+        if cells.len() != 2 {
+            return false;
+        }
+        let prev = &cells[0];
+        let next = &cells[1];
+        if prev.height == 0 || next.height == 0 {
+            return false;
+        }
+        let prev_is_reasoning = prev
+            .cell
+            .and_then(|cell| cell.as_any().downcast_ref::<crate::history_cell::CollapsibleReasoningCell>())
+            .is_some();
+        let next_is_reasoning = next
+            .cell
+            .and_then(|cell| cell.as_any().downcast_ref::<crate::history_cell::CollapsibleReasoningCell>())
+            .is_some();
+        if prev_is_reasoning || next_is_reasoning {
+            return false;
+        }
+        let spacing = 1u16;
+        let spacing_range = self
+            .history_render
+            .extend_prefix_for_append(prefix_width, spacing, next.height, history_count);
+        if let Some(range) = spacing_range {
+            self.history_render.append_spacing_range(range);
+        }
+        true
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
@@ -8918,6 +9132,9 @@ impl ChatWidget<'_> {
         }
 
         let append = pos == self.history_cells.len();
+        if !append {
+            self.history_prefix_append_only.set(false);
+        }
         if append {
             self.history_cells.push(cell);
             self.history_cell_ids.push(maybe_id);
@@ -8987,7 +9204,16 @@ impl ChatWidget<'_> {
         } else {
             self.cell_order_dbg.insert(pos, Some(dbg));
         }
-        self.invalidate_height_cache();
+        if let Some(id) = maybe_id {
+            if id != HistoryId::ZERO {
+                self.history_render.invalidate_history_id(id);
+            } else {
+                self.history_render.invalidate_prefix_only();
+            }
+        } else {
+            self.history_render.invalidate_prefix_only();
+        }
+        self.mark_render_requests_dirty();
         self.autoscroll_if_near_bottom();
         self.bottom_pane.set_has_chat_history(true);
         self.process_animation_cleanup();
@@ -9118,6 +9344,9 @@ impl ChatWidget<'_> {
         Self::assign_history_id_inner(&mut cell, id);
 
         let append = pos == self.history_cells.len();
+        if !append {
+            self.history_prefix_append_only.set(false);
+        }
         if append {
             self.history_cells.push(cell);
             self.history_cell_ids.push(Some(id));
@@ -9184,7 +9413,8 @@ impl ChatWidget<'_> {
         } else {
             self.cell_order_dbg.insert(pos, Some(dbg));
         }
-        self.invalidate_height_cache();
+        self.history_render.invalidate_history_id(id);
+        self.mark_render_requests_dirty();
         self.autoscroll_if_near_bottom();
         self.bottom_pane.set_has_chat_history(true);
         self.process_animation_cleanup();
@@ -9194,7 +9424,6 @@ impl ChatWidget<'_> {
         self.app_event_tx.send(AppEvent::RequestRedraw);
         self.refresh_explore_trailing_flags();
         self.refresh_reasoning_collapsed_visibility();
-        self.history_render.invalidate_history_id(id);
         self.mark_history_dirty();
         pos
     }
@@ -9854,6 +10083,7 @@ impl ChatWidget<'_> {
             return;
         }
 
+        let old_id = self.history_cell_ids.get(idx).and_then(|id| *id);
         let record = history_cell::record_from_cell(cell.as_ref());
         let mut maybe_id = None;
 
@@ -9893,7 +10123,18 @@ impl ChatWidget<'_> {
         if idx < self.history_cell_ids.len() {
             self.history_cell_ids[idx] = maybe_id;
         }
-        self.invalidate_height_cache();
+        if let Some(id) = old_id {
+            self.history_render.invalidate_history_id(id);
+        } else {
+            self.history_render.invalidate_prefix_only();
+        }
+        if let Some(id) = maybe_id {
+            if Some(id) != old_id {
+                self.history_render.invalidate_history_id(id);
+            }
+        }
+        self.mark_render_requests_dirty();
+        self.history_prefix_append_only.set(false);
         self.request_redraw();
         self.refresh_explore_trailing_flags();
         // Keep debug info for this cell index as-is.
@@ -9905,6 +10146,7 @@ impl ChatWidget<'_> {
             return;
         }
 
+        let removed_id = self.history_cell_ids.get(idx).and_then(|id| *id);
         if let Some(record_idx) = self.record_index_for_cell(idx) {
             let _ = self
                 .history_state
@@ -9921,7 +10163,13 @@ impl ChatWidget<'_> {
         if idx < self.cell_order_dbg.len() {
             self.cell_order_dbg.remove(idx);
         }
-        self.invalidate_height_cache();
+        if let Some(id) = removed_id {
+            self.history_render.invalidate_history_id(id);
+        } else {
+            self.history_render.invalidate_prefix_only();
+        }
+        self.mark_render_requests_dirty();
+        self.history_prefix_append_only.set(false);
         self.request_redraw();
         self.refresh_explore_trailing_flags();
         self.mark_history_dirty();
@@ -11233,6 +11481,7 @@ impl ChatWidget<'_> {
 
     fn mark_history_dirty(&mut self) {
         self.history_snapshot_dirty = true;
+        self.render_request_cache_dirty.set(true);
         self.flush_history_snapshot_if_needed(false);
     }
 
@@ -11804,6 +12053,8 @@ impl ChatWidget<'_> {
         self.history_state.restore(snapshot);
 
         self.history_render.invalidate_all();
+        self.mark_render_requests_dirty();
+        self.history_prefix_append_only.set(false);
 
         self.history_cells.clear();
         self.history_cell_ids.clear();
@@ -13404,7 +13655,12 @@ impl ChatWidget<'_> {
                         .remove(&ToolCallId(call_id.clone()))
                     {
                         let trimmed = content.trim();
-                        let wait_still_pending = !success && trimmed != "Cancelled by user.";
+                        let wait_missing_job = wait_result_missing_background_job(trimmed);
+                        let wait_interrupted = wait_result_interrupted(trimmed);
+                        let mut wait_still_pending =
+                            !success && trimmed != "Cancelled by user." && !wait_missing_job;
+                        let mut exec_running = false;
+                        let mut exec_completed = false;
                         let mut note_lines: Vec<(String, bool)> = Vec::new();
                         let suppress_json_notes = serde_json::from_str::<serde_json::Value>(
                             trimmed,
@@ -13430,6 +13686,7 @@ impl ChatWidget<'_> {
                         let mut wait_total: Option<Duration> = None;
                         let mut wait_notes_snapshot: Vec<(String, bool)> = Vec::new();
                         if let Some(running) = self.exec.running_commands.get_mut(&exec_call_id) {
+                            exec_running = true;
                             let base = running.wait_total.unwrap_or_default();
                             let total = base.saturating_add(duration);
                             running.wait_total = Some(total);
@@ -13473,6 +13730,7 @@ impl ChatWidget<'_> {
                                 .index_of(id)
                                 .and_then(|idx| self.history_state.get(idx).cloned());
                             if let Some(HistoryRecord::Exec(record)) = exec_record {
+                                exec_completed = !matches!(record.status, ExecStatus::Running);
                                 if wait_total.is_none() {
                                     let base = record.wait_total.unwrap_or_default();
                                     wait_total = Some(base.saturating_add(duration));
@@ -13490,12 +13748,29 @@ impl ChatWidget<'_> {
                                     Self::append_wait_pairs(&mut wait_notes_snapshot, &note_lines);
                                 }
                             }
-                            let _ = self.update_exec_wait_state_with_pairs(
-                                id,
-                                wait_total,
-                                wait_still_pending,
-                                &wait_notes_snapshot,
-                            );
+                            if exec_completed {
+                                wait_still_pending = false;
+                            } else if wait_interrupted && !exec_running {
+                                wait_still_pending = false;
+                            }
+
+                            if !exec_completed {
+                                let _ = self.update_exec_wait_state_with_pairs(
+                                    id,
+                                    wait_total,
+                                    wait_still_pending,
+                                    &wait_notes_snapshot,
+                                );
+                            }
+                        }
+
+                        if exec_completed {
+                            self.bottom_pane
+                                .update_status_text("responding".to_string());
+                            self.maybe_hide_spinner();
+                            self.invalidate_height_cache();
+                            self.request_redraw();
+                            return;
                         }
 
                         if success {
@@ -13506,6 +13781,21 @@ impl ChatWidget<'_> {
                         } else if trimmed == "Cancelled by user." {
                             self.bottom_pane
                                 .update_status_text("wait cancelled".to_string());
+                        } else if wait_missing_job || (wait_interrupted && !exec_running) {
+                            let finalized = exec_tools::finalize_wait_missing_exec(
+                                self,
+                                exec_call_id.clone(),
+                                trimmed,
+                            );
+                            if finalized {
+                                self.bottom_pane.update_status_text(
+                                    "command finished (output unavailable)".to_string(),
+                                );
+                            } else {
+                                self.bottom_pane.update_status_text(
+                                    "command status unavailable".to_string(),
+                                );
+                            }
                         } else {
                             self.bottom_pane
                                 .update_status_text("waiting for command".to_string());
@@ -14428,7 +14718,7 @@ impl ChatWidget<'_> {
         running_preview.id = "demo-running".to_string();
         running_preview.name = "Lint Fixer".to_string();
         running_preview.status = "Running".to_string();
-        running_preview.model = Some("code-gpt-5.1".to_string());
+        running_preview.model = Some("code-gpt-5.2".to_string());
         running_preview.details = vec![history_cell::AgentDetail::Progress(
             "Refining suggested fixes".to_string(),
         )];
@@ -14917,6 +15207,18 @@ impl ChatWidget<'_> {
 
         self.submit_op(Op::ListCustomPrompts);
         self.show_settings_overlay(Some(SettingsSection::Prompts));
+    }
+
+    pub(crate) fn handle_skills_command(&mut self, args: &str) {
+        if !args.trim().is_empty() {
+            self.history_push_plain_state(history_cell::new_error_event(
+                "Usage: /skills".to_string(),
+            ));
+            return;
+        }
+
+        self.submit_op(Op::ListSkills);
+        self.show_settings_overlay(Some(SettingsSection::Skills));
     }
 
     #[allow(dead_code)]
@@ -16749,6 +17051,16 @@ fi\n\
         if !self.active_task_ids.is_empty() {
             return true;
         }
+        if self.active_agents.iter().any(|agent| {
+            let is_auto_review = matches!(agent.source_kind, Some(AgentSourceKind::AutoReview))
+                || agent
+                    .batch_id
+                    .as_deref()
+                    .is_some_and(|batch| batch.eq_ignore_ascii_case("auto-review"));
+            matches!(agent.status, AgentStatus::Pending | AgentStatus::Running) && !is_auto_review
+        }) {
+            return true;
+        }
         false
     }
 
@@ -17052,6 +17364,8 @@ fi\n\
 
     pub(crate) fn show_auto_drive_settings(&mut self) {
         self.history_render.invalidate_all();
+        self.mark_render_requests_dirty();
+        self.history_prefix_append_only.set(false);
         self.ensure_auto_drive_settings_overlay();
     }
 
@@ -17066,6 +17380,8 @@ fi\n\
             self.close_settings_overlay();
         }
         self.history_render.invalidate_all();
+        self.mark_render_requests_dirty();
+        self.history_prefix_append_only.set(false);
         let should_rebuild_view = if self.auto_state.is_active() {
             !self.auto_state.is_paused_manual()
         } else {
@@ -17268,12 +17584,21 @@ fi\n\
 
     fn auto_schedule_restart_event(&self, token: u64, attempt: u32, delay: Duration) {
         let tx = self.app_event_tx.clone();
-        tokio::spawn(async move {
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
-            }
-            tx.send(AppEvent::AutoCoordinatorRestart { token, attempt });
-        });
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                tx.send(AppEvent::AutoCoordinatorRestart { token, attempt });
+            });
+        } else {
+            std::thread::spawn(move || {
+                if !delay.is_zero() {
+                    std::thread::sleep(delay);
+                }
+                tx.send(AppEvent::AutoCoordinatorRestart { token, attempt });
+            });
+        }
     }
 
     fn auto_pause_for_transient_failure(&mut self, message: String) {
@@ -17711,7 +18036,7 @@ Have we met every part of this goal and is there no further work to do?"#
                         "Press Esc again to exit Auto Drive".to_string(),
                     ));
                     let message = format!(
-                        "Auto Drive will retry automatically in {human_delay} (attempt {attempt}/{AUTO_RESTART_MAX_ATTEMPTS}). Last error: {reason}"
+                        "Auto Drive will retry automatically in {human_delay} (attempt {attempt}). Last error: {reason}"
                     );
                     self.auto_card_add_action(message, AutoDriveActionKind::Warning);
                     self.auto_card_set_status(AutoDriveStatus::Paused);
@@ -17843,12 +18168,10 @@ Have we met every part of this goal and is there no further work to do?"#
         self.auto_state.restart_token = token;
 
         let resume_message = if restart.reason.is_empty() {
-            format!(
-                "Auto Drive resuming automatically (attempt {attempt}/{AUTO_RESTART_MAX_ATTEMPTS})."
-            )
+            format!("Auto Drive resuming automatically (attempt {attempt}).")
         } else {
             format!(
-                "Auto Drive resuming automatically (attempt {attempt}/{AUTO_RESTART_MAX_ATTEMPTS}); previous error: {}",
+                "Auto Drive resuming automatically (attempt {attempt}); previous error: {}",
                 restart.reason
             )
         };
@@ -23462,6 +23785,8 @@ Have we met every part of this goal and is there no further work to do?"#
         self.last_theme = new;
         self.render_theme_epoch = self.render_theme_epoch.saturating_add(1);
         self.history_render.invalidate_all();
+        self.mark_render_requests_dirty();
+        self.history_prefix_append_only.set(false);
         self.app_event_tx.send(AppEvent::RequestRedraw);
     }
 
@@ -28397,6 +28722,7 @@ use code_core::protocol::OrderMeta;
         AskForApproval,
         AgentMessageEvent,
         AgentStatusUpdateEvent,
+        ErrorEvent,
         Event,
         EventMsg,
         ExecCommandBeginEvent,
@@ -29601,6 +29927,84 @@ use code_core::protocol::OrderMeta;
 
         let auto_pending = harness.with_chat(|chat| chat.auto_pending_goal_request);
         assert!(!auto_pending);
+    }
+
+    #[test]
+    fn auto_drive_view_marks_running_when_agents_active() {
+        let mut harness = ChatWidgetHarness::new();
+        harness.with_chat(|chat| {
+            chat.auto_state.set_phase(AutoRunPhase::Active);
+            chat.auto_state.goal = Some("Ship feature".to_string());
+            chat.auto_rebuild_live_ring();
+        });
+
+        harness.handle_event(Event {
+            id: "turn-1".to_string(),
+            event_seq: 0,
+            msg: EventMsg::AgentStatusUpdate(AgentStatusUpdateEvent {
+                agents: vec![CoreAgentInfo {
+                    id: "agent-1".to_string(),
+                    name: "Worker".to_string(),
+                    status: "running".to_string(),
+                    batch_id: Some("batch-1".to_string()),
+                    model: None,
+                    last_progress: None,
+                    result: None,
+                    error: None,
+                    elapsed_ms: None,
+                    token_count: None,
+                    last_activity_at: None,
+                    seconds_since_last_activity: None,
+                    source_kind: None,
+                }],
+                context: None,
+                task: None,
+            }),
+            order: None,
+        });
+
+        let cli_running = harness.with_chat(|chat| {
+            chat
+                .bottom_pane
+                .auto_view_model()
+                .and_then(|model| match model {
+                    AutoCoordinatorViewModel::Active(active) => Some(active.cli_running),
+                })
+                .unwrap_or(false)
+        });
+
+        assert!(
+            cli_running,
+            "auto drive view should treat running agents as active"
+        );
+    }
+
+    #[test]
+    fn auto_drive_error_enters_transient_recovery() {
+        let mut harness = ChatWidgetHarness::new();
+        harness.with_chat(|chat| {
+            chat.auto_state.set_phase(AutoRunPhase::Active);
+            chat.auto_state.goal = Some("Ship feature".to_string());
+            chat.auto_state.on_prompt_ready(true);
+            chat.auto_rebuild_live_ring();
+        });
+
+        harness.handle_event(Event {
+            id: "turn-1".to_string(),
+            event_seq: 0,
+            msg: EventMsg::Error(ErrorEvent {
+                message: "internal error; agent loop died unexpectedly".to_string(),
+            }),
+            order: None,
+        });
+
+        let (still_active, in_recovery) = harness.with_chat(|chat| {
+            (chat.auto_state.is_active(), chat.auto_state.in_transient_recovery())
+        });
+        assert!(
+            still_active && in_recovery,
+            "auto drive should pause for recovery after an error event"
+        );
     }
 
     #[test]
@@ -35631,7 +36035,8 @@ impl ChatWidget<'_> {
             body_area.width
         } else {
             let max_allowed = body_area.width.saturating_sub(30).max(18);
-            desired_sidebar.clamp(24, max_allowed)
+            let min_allowed = 24.min(max_allowed);
+            desired_sidebar.clamp(min_allowed, max_allowed)
         };
 
         let constraints = if body_area.width <= sidebar_width {
@@ -36586,20 +36991,6 @@ impl WidgetRef for &ChatWidget<'_> {
             .fg(crate::colors::text());
         fill_rect(buf, history_area, Some(' '), base_style);
 
-        // Collect all content items into a single list.
-        // The shared renderer cache (documented in docs/history_render_cache_bridge.md)
-        // consumes this list via `RenderRequest` so we can reuse per-cell caches
-        // while progressively moving the draw loop toward pure HistoryRecord state.
-        let mut all_content: Vec<&dyn HistoryCell> = Vec::new();
-        for cell in self.history_cells.iter() {
-            all_content.push(cell);
-        }
-
-        // Add active/streaming cell if present
-        if let Some(ref cell) = self.active_exec_cell {
-            all_content.push(cell as &dyn HistoryCell);
-        }
-
         // Add live streaming content if present
         let streaming_lines = self
             .live_builder
@@ -36616,10 +37007,6 @@ impl WidgetRef for &ChatWidget<'_> {
             None
         };
 
-        if let Some(ref cell) = streaming_cell {
-            all_content.push(cell);
-        }
-
         // Append any queued user messages as sticky preview cells at the very
         // end so they always render at the bottom until they are dispatched.
         let mut queued_preview_cells: Vec<crate::history_cell::PlainHistoryCell> = Vec::new();
@@ -36628,101 +37015,66 @@ impl WidgetRef for &ChatWidget<'_> {
                 let state = history_cell::new_queued_user_prompt(qm.display_text.clone());
                 queued_preview_cells.push(crate::history_cell::PlainHistoryCell::from_state(state));
             }
-            for c in &queued_preview_cells {
-                all_content.push(c as &dyn HistoryCell);
-            }
         }
 
-        let mut render_requests: Vec<RenderRequest> = Vec::with_capacity(all_content.len());
-        for (idx, cell) in all_content.iter().enumerate() {
-            let (history_id, has_record) = if idx < self.history_cell_ids.len() {
-                if let Some(id) = self.history_cell_ids[idx] {
-                    let exists = self.history_state.index_of(id).is_some();
-                    (id, exists)
-                } else {
-                    (HistoryId::ZERO, false)
-                }
-            } else {
-                (HistoryId::ZERO, false)
-            };
+        self.ensure_render_request_cache();
 
-            let cell_has_custom_render = cell.has_custom_render();
-            let is_streaming = cell
-                .as_any()
-                .downcast_ref::<crate::history_cell::StreamingContentCell>()
-                .is_some();
-
-            let mut cacheable = history_id != HistoryId::ZERO
-                && has_record
-                && !cell_has_custom_render
-                && !cell.is_animating()
-                && !is_streaming;
-
+        let render_request_cache = self.render_request_cache.borrow();
+        let mut render_requests: Vec<RenderRequest> =
+            Vec::with_capacity(self.history_cells.len().saturating_add(3));
+        for (cell, seed) in self
+            .history_cells
+            .iter()
+            .zip(render_request_cache.iter())
+        {
             let assistant = cell
                 .as_any()
                 .downcast_ref::<crate::history_cell::AssistantMarkdownCell>();
-
-            let mut fallback_lines = None;
-            let mut kind = RenderRequestKind::Legacy;
-            if history_id != HistoryId::ZERO {
-                if let Some(record) = self.history_state.record(history_id) {
-                    match record {
-                        HistoryRecord::Exec(_) => {
-                            kind = RenderRequestKind::Exec { id: history_id };
-                        }
-                        HistoryRecord::MergedExec(_) => {
-                            kind = RenderRequestKind::MergedExec { id: history_id };
-                        }
-                        HistoryRecord::Explore(_) => {
-                            let hold_header = if idx < self.history_cells.len() {
-                                self.rendered_explore_should_hold(idx)
-                            } else {
-                                true
-                            };
-                            let full_detail = self.is_reasoning_shown();
-                            kind = RenderRequestKind::Explore {
-                                id: history_id,
-                                hold_header,
-                                full_detail,
-                            };
-                        }
-                        HistoryRecord::Diff(_) => {
-                            kind = RenderRequestKind::Diff { id: history_id };
-                        }
-                        HistoryRecord::AssistantStream(stream_state) => {
-                            kind = RenderRequestKind::Streaming { id: history_id };
-                            if stream_state.in_progress {
-                                cacheable = false;
-                            }
-                        }
-                        HistoryRecord::AssistantMessage(_) => {
-                            kind = RenderRequestKind::Assistant { id: history_id };
-                        }
-                        other => {
-                            fallback_lines =
-                                self.fallback_lines_for_record(*cell, other);
-                        }
-                    }
-                }
-            }
-
-            if fallback_lines.is_none() && !cell_has_custom_render && history_id == HistoryId::ZERO {
-                let lines = cell.display_lines_trimmed();
-                if !lines.is_empty() {
-                    fallback_lines = Some(lines);
-                }
-            }
-
             render_requests.push(RenderRequest {
-                history_id,
-                cell: Some(*cell),
+                history_id: seed.history_id,
+                cell: Some(cell.as_ref()),
                 assistant,
-                use_cache: cacheable,
-                fallback_lines,
-                kind,
+                use_cache: seed.use_cache,
+                fallback_lines: seed.fallback_lines.clone(),
+                kind: seed.kind.clone(),
                 config: &self.config,
             });
+        }
 
+        if let Some(ref cell) = self.active_exec_cell {
+            render_requests.push(RenderRequest {
+                history_id: HistoryId::ZERO,
+                cell: Some(cell as &dyn HistoryCell),
+                assistant: None,
+                use_cache: false,
+                fallback_lines: None,
+                kind: RenderRequestKind::Legacy,
+                config: &self.config,
+            });
+        }
+
+        if let Some(ref cell) = streaming_cell {
+            render_requests.push(RenderRequest {
+                history_id: HistoryId::ZERO,
+                cell: Some(cell as &dyn HistoryCell),
+                assistant: None,
+                use_cache: false,
+                fallback_lines: None,
+                kind: RenderRequestKind::Legacy,
+                config: &self.config,
+            });
+        }
+
+        for c in &queued_preview_cells {
+            render_requests.push(RenderRequest {
+                history_id: HistoryId::ZERO,
+                cell: Some(c as &dyn HistoryCell),
+                assistant: None,
+                use_cache: false,
+                fallback_lines: None,
+                kind: RenderRequestKind::Legacy,
+                config: &self.config,
+            });
         }
 
         // Calculate total content height using prefix sums; build if needed
@@ -36749,6 +37101,15 @@ impl WidgetRef for &ChatWidget<'_> {
         let perf_enabled = self.perf_state.enabled;
         let mut rendered_cells_full: Option<Vec<VisibleCell>> = None;
         if needs_prefix_rebuild {
+            let mut used_fast_append = false;
+            if self.try_append_prefix_fast(&render_requests, render_settings, content_area.width) {
+                used_fast_append = true;
+                self.history_prefix_append_only.set(true);
+            }
+            if used_fast_append {
+                // Prefix sums already updated; skip the full rebuild path.
+                rendered_cells_full = None;
+            } else {
             if perf_enabled {
                 let mut p = self.perf_state.stats.borrow_mut();
                 p.prefix_rebuilds = p.prefix_rebuilds.saturating_add(1);
@@ -36835,10 +37196,17 @@ impl WidgetRef for &ChatWidget<'_> {
                 let mut p = self.perf_state.stats.borrow_mut();
                 p.ns_total_height = p.ns_total_height.saturating_add(elapsed);
             }
-            self.history_render
-                .update_prefix_cache(content_area.width, prefix, total_height, cells.len());
+            self.history_render.update_prefix_cache(
+                content_area.width,
+                prefix,
+                total_height,
+                cells.len(),
+                self.history_cells.len(),
+            );
             self.history_render.update_spacing_ranges(spacing_ranges);
             rendered_cells_full = Some(cells);
+            self.history_prefix_append_only.set(true);
+            }
         }
 
         let mut total_height = self.history_render.last_total_height();

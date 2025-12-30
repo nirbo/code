@@ -1,9 +1,10 @@
-## @just-every/code v0.6.15
-This release tightens Auto Drive timeboxing and adds clearer execution guidance.
+## @just-every/code v0.6.20
+
+Auto Drive reliability improvements for smoother hands-free runs.
 
 ### Changes
-- Exec: add timeboxed auto-exec guidance to keep runs bounded.
-- Auto Drive: tighten time budget guidance and drop unused seed to reduce noise.
+- Auto Drive: keep retrying after errors so runs recover instead of stopping early.
+- Auto Drive: schedule restarts without depending on Tokio to avoid stalled recoveries.
 
 ### Install
 ```
@@ -11,4 +12,4 @@ npm install -g @just-every/code@latest
 code
 ```
 
-Compare: https://github.com/just-every/code/compare/v0.6.14...v0.6.15
+Compare: https://github.com/just-every/code/compare/v0.6.19...v0.6.20
