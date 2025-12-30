@@ -100,6 +100,7 @@ pub(crate) async fn stream_anthropic_messages(
         "messages": anthropic_messages,
         "max_tokens": 8192,
         "stream": true,
+        "service_tier": "standard_only", // Required for restricted subscription credentials
     });
 
     // Build system prompt as an array of text blocks
