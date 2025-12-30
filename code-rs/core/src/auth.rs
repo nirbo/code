@@ -573,9 +573,19 @@ async fn try_refresh_token(
     client: &reqwest::Client,
     mode: AuthMode,
 ) -> Result<RefreshResponse, RefreshTokenError> {
-    let (endpoint, client_id, scope) = match mode {
-        AuthMode::Anthropic => (ANTHROPIC_TOKEN_URL, ANTHROPIC_CLIENT_ID, "org:create_api_key user:profile user:inference"),
-        _ => ("https://auth.openai.com/oauth/token", CLIENT_ID, "openid profile email"),
+    let (endpoint, client_id, scope, redirect_uri) = match mode {
+        AuthMode::Anthropic => (
+            ANTHROPIC_TOKEN_URL,
+            ANTHROPIC_CLIENT_ID,
+            "org:create_api_key user:profile user:inference",
+            Some("https://console.anthropic.com/oauth/code/callback"),
+        ),
+        _ => (
+            "https://auth.openai.com/oauth/token",
+            CLIENT_ID,
+            "openid profile email",
+            None,
+        ),
     };
 
     let refresh_request = RefreshRequest {
@@ -583,12 +593,14 @@ async fn try_refresh_token(
         grant_type: "refresh_token",
         refresh_token,
         scope,
+        redirect_uri,
     };
 
     // Use shared client factory to include standard headers
     let response = client
         .post(endpoint)
         .header("Content-Type", "application/json")
+        .header("User-Agent", "claude-code/20250219") // Explicit UA for strict WAF
         .json(&refresh_request)
         .send()
         .await
@@ -636,6 +648,8 @@ struct RefreshRequest {
     grant_type: &'static str,
     refresh_token: String,
     scope: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirect_uri: Option<&'static str>,
 }
 
 #[derive(Deserialize, Clone)]
