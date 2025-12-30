@@ -6286,7 +6286,14 @@ impl ChatWidget<'_> {
             let _ = w.history_insert_plain_state_with_key(notice_state, notice_key, "prelude");
             if connecting_mcp && !w.test_mode {
                 // Render connecting status as a separate cell with standard gutter and spacing
-                w.history_push_top_next_req(history_cell::new_connecting_mcp_status());
+                // Use "background" tag since this is a BackgroundEventCell
+                let mcp_key = w.next_req_key_top();
+                let _ = w.history_insert_with_key_global_tagged(
+                    Box::new(history_cell::new_connecting_mcp_status()),
+                    mcp_key,
+                    "background",
+                    None,
+                );
             }
             // Mark welcome as shown to avoid duplicating the Popular commands section
             // when SessionConfigured arrives shortly after.
