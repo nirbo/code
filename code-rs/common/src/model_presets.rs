@@ -396,67 +396,26 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
         },
         // ─────────────────────────────────────────────────────────────────────
         // Anthropic Claude Models (for Pro/Max subscription via OAuth)
+        // Single entry with model variants as options (Claude uses thinking mode, not reasoning levels)
         // ─────────────────────────────────────────────────────────────────────
         ModelPreset {
-            id: "claude-opus-4-5".to_string(),
-            model: "claude-opus-4-5".to_string(),
-            display_name: "Claude Opus 4.5".to_string(),
-            description: "Anthropic's most powerful model. Best for complex reasoning.".to_string(),
-            default_reasoning_effort: ReasoningEffort::High,
+            id: "anthropic".to_string(),
+            model: "claude-sonnet-4-5".to_string(), // Default to Sonnet (balanced)
+            display_name: "Anthropic".to_string(),
+            description: "Claude models with extended thinking. Select model tier below.".to_string(),
+            default_reasoning_effort: ReasoningEffort::Medium, // Medium = Sonnet
             supported_reasoning_efforts: vec![
-                ReasoningEffortPreset {
-                    effort: ReasoningEffort::Medium,
-                    description: "Balanced reasoning depth for general tasks".to_string(),
-                },
                 ReasoningEffortPreset {
                     effort: ReasoningEffort::High,
-                    description: "Deep reasoning for complex problems".to_string(),
-                },
-            ],
-            supported_text_verbosity: ALL_TEXT_VERBOSITY,
-            is_default: false,
-            upgrade: None,
-            show_in_picker: true,
-        },
-        ModelPreset {
-            id: "claude-sonnet-4-5".to_string(),
-            model: "claude-sonnet-4-5".to_string(),
-            display_name: "Claude Sonnet 4.5".to_string(),
-            description: "Anthropic's balanced model. Great for coding and general tasks.".to_string(),
-            default_reasoning_effort: ReasoningEffort::Medium,
-            supported_reasoning_efforts: vec![
-                ReasoningEffortPreset {
-                    effort: ReasoningEffort::Low,
-                    description: "Fast responses with lighter reasoning".to_string(),
+                    description: "Opus 4.5 - Most powerful, best for complex reasoning".to_string(),
                 },
                 ReasoningEffortPreset {
                     effort: ReasoningEffort::Medium,
-                    description: "Balanced speed and reasoning depth".to_string(),
+                    description: "Sonnet 4.5 - Balanced, great for coding and general tasks".to_string(),
                 },
-                ReasoningEffortPreset {
-                    effort: ReasoningEffort::High,
-                    description: "Deeper reasoning for complex tasks".to_string(),
-                },
-            ],
-            supported_text_verbosity: ALL_TEXT_VERBOSITY,
-            is_default: false,
-            upgrade: None,
-            show_in_picker: true,
-        },
-        ModelPreset {
-            id: "claude-haiku-4-5".to_string(),
-            model: "claude-haiku-4-5".to_string(),
-            display_name: "Claude Haiku 4.5".to_string(),
-            description: "Anthropic's fastest model. Best for quick, simple tasks.".to_string(),
-            default_reasoning_effort: ReasoningEffort::Low,
-            supported_reasoning_efforts: vec![
                 ReasoningEffortPreset {
                     effort: ReasoningEffort::Low,
-                    description: "Fast responses for simple tasks".to_string(),
-                },
-                ReasoningEffortPreset {
-                    effort: ReasoningEffort::Medium,
-                    description: "Moderate reasoning when needed".to_string(),
+                    description: "Haiku 4.5 - Fastest, best for quick simple tasks".to_string(),
                 },
             ],
             supported_text_verbosity: ALL_TEXT_VERBOSITY,
