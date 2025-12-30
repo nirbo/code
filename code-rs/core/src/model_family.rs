@@ -251,6 +251,27 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             context_window: Some(CONTEXT_WINDOW_272K),
             max_output_tokens: Some(MAX_OUTPUT_DEFAULT),
         )
+    } else if slug.starts_with("claude-opus-4.5") || slug.starts_with("anthropic/claude-opus-4.5") {
+        model_family!(
+            slug, "claude-opus-4.5",
+            needs_special_apply_patch_instructions: true,
+            context_window: Some(200_000),
+            max_output_tokens: Some(8_192),
+        )
+    } else if slug.starts_with("claude-sonnet-4.5") || slug.starts_with("anthropic/claude-sonnet-4.5") {
+        model_family!(
+            slug, "claude-sonnet-4.5",
+            needs_special_apply_patch_instructions: true,
+            context_window: Some(200_000),
+            max_output_tokens: Some(8_192),
+        )
+    } else if slug.starts_with("claude-haiku-4.5") || slug.starts_with("anthropic/claude-haiku-4.5") {
+        model_family!(
+            slug, "claude-haiku-4.5",
+            needs_special_apply_patch_instructions: true,
+            context_window: Some(200_000),
+            max_output_tokens: Some(8_192),
+        )
     } else {
         None
     }

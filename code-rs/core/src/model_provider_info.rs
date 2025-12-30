@@ -39,6 +39,9 @@ pub enum WireApi {
     /// Regular Chat Completions compatible with `/v1/chat/completions`.
     #[default]
     Chat,
+
+    /// Anthropic Messages API compatible with `/v1/messages`.
+    Anthropic,
 }
 
 /// Serializable representation of a provider definition.
@@ -308,6 +311,7 @@ impl ModelProviderInfo {
         match self.wire_api {
             WireApi::Responses => format!("{base_url}/responses{query_string}"),
             WireApi::Chat => format!("{base_url}/chat/completions{query_string}"),
+            WireApi::Anthropic => format!("{base_url}/v1/messages{query_string}"),
         }
     }
 

@@ -429,6 +429,29 @@ impl ModelClient {
             .or(prompt.log_tag.as_deref());
         match self.provider.wire_api {
             WireApi::Responses => self.stream_responses(prompt, log_tag).await,
+            WireApi::Anthropic => {
+                let effective_family = prompt
+                    .model_family_override
+                    .as_ref()
+                    .unwrap_or(&self.config.model_family);
+                let model_slug = prompt
+                    .model_override
+                    .as_deref()
+                    .unwrap_or(self.config.model.as_str());
+
+                crate::anthropic_completions::stream_anthropic_messages(
+                    prompt,
+                    effective_family,
+                    model_slug,
+                    &self.client,
+                    &self.provider,
+                    &self.debug_logger,
+                    self.auth_manager.clone(),
+                    self.otel_event_manager.clone(),
+                    log_tag,
+                )
+                .await
+            }
             WireApi::Chat => {
                 let effective_family = prompt
                     .model_family_override

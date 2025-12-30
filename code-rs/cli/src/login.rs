@@ -27,6 +27,22 @@ pub async fn login_with_chatgpt(code_home: PathBuf, originator: String) -> std::
     server.block_until_done().await
 }
 
+pub async fn login_with_anthropic(code_home: PathBuf, originator: String) -> std::io::Result<()> {
+    let opts = ServerOptions::for_provider(
+        code_home,
+        code_login::OAuthProvider::Anthropic,
+        originator,
+    );
+    let server = run_login_server(opts)?;
+
+    eprintln!(
+        "Starting local Anthropic login server on http://localhost:{}.\nIf your browser did not open, navigate to this URL to authenticate:\n\n{}",
+        server.actual_port, server.auth_url,
+    );
+
+    server.block_until_done().await
+}
+
 pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) -> ! {
     let config = load_config_or_exit(cli_config_overrides);
 
@@ -38,6 +54,26 @@ pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) ->
     {
         Ok(_) => {
             eprintln!("Successfully logged in");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Error logging in: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub async fn run_login_with_anthropic(cli_config_overrides: CliConfigOverrides) -> ! {
+    let config = load_config_or_exit(cli_config_overrides);
+
+    match login_with_anthropic(
+        config.code_home,
+        config.responses_originator_header.clone(),
+    )
+    .await
+    {
+        Ok(_) => {
+            eprintln!("Successfully logged in with Anthropic");
             std::process::exit(0);
         }
         Err(e) => {

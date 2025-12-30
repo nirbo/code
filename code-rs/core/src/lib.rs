@@ -14,6 +14,7 @@ pub mod account_usage;
 mod account_switching;
 pub mod bash;
 mod auto_drive_pid;
+mod anthropic_completions;
 mod chat_completions;
 mod client;
 mod client_common;

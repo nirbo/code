@@ -12,6 +12,7 @@ use code_cli::SeatbeltCommand;
 use code_cli::login::read_api_key_from_stdin;
 use code_cli::login::run_login_status;
 use code_cli::login::run_login_with_api_key;
+use code_cli::login::run_login_with_anthropic;
 use code_cli::login::run_login_with_chatgpt;
 use code_cli::login::run_login_with_device_code;
 use code_cli::login::run_logout;
@@ -332,6 +333,10 @@ struct LoginCommand {
     )]
     api_key: Option<String>,
 
+    /// Login with Anthropic Claude (OAuth)
+    #[arg(long = "anthropic")]
+    anthropic: bool,
+
     /// EXPERIMENTAL: Use device code flow (not yet supported)
     /// This feature is experimental and may changed in future releases.
     #[arg(long = "experimental_use-device-code", hide = true)]
@@ -531,6 +536,8 @@ async fn cli_main(code_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()>
                     } else if login_cli.with_api_key {
                         let api_key = read_api_key_from_stdin();
                         run_login_with_api_key(login_cli.config_overrides, api_key).await;
+                    } else if login_cli.anthropic {
+                        run_login_with_anthropic(login_cli.config_overrides).await;
                     } else {
                         run_login_with_chatgpt(login_cli.config_overrides).await;
                     }
