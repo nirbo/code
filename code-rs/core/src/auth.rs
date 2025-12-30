@@ -23,6 +23,7 @@ use crate::token_data::{parse_id_token, PlanType};
 use crate::token_data::KnownPlan;
 use crate::config::resolve_code_path_for_read;
 use crate::util::backoff;
+use base64::Engine;
 
 #[derive(Debug, Clone)]
 pub struct CodexAuth {
@@ -94,7 +95,7 @@ impl CodexAuth {
         let mut attempt: u32 = 0;
         loop {
             attempt = attempt.saturating_add(1);
-            match try_refresh_token(refresh_token.clone(), &self.client).await {
+            match try_refresh_token(refresh_token.clone(), &self.client, self.mode).await {
                 Ok(refresh_response) => {
                     return self.persist_refresh_response(refresh_response).await
                 }
@@ -188,7 +189,7 @@ impl CodexAuth {
                 if last_refresh < Utc::now() - chrono::Duration::days(28) {
                     let refresh_response = tokio::time::timeout(
                         Duration::from_secs(60),
-                        try_refresh_token(tokens.refresh_token.clone(), &self.client),
+                        try_refresh_token(tokens.refresh_token.clone(), &self.client, self.mode),
                     )
                     .await
         .map_err(|_| {
@@ -530,14 +531,16 @@ pub fn write_auth_json(auth_file: &Path, auth_dot_json: &AuthDotJson) -> std::io
 
 async fn update_tokens(
     auth_file: &Path,
-    id_token: String,
+    id_token: Option<String>,
     access_token: Option<String>,
     refresh_token: Option<String>,
 ) -> std::io::Result<AuthDotJson> {
     let mut auth_dot_json = try_read_auth_json(auth_file)?;
 
     let tokens = auth_dot_json.tokens.get_or_insert_with(TokenData::default);
-    tokens.id_token = parse_id_token(&id_token).map_err(std::io::Error::other)?;
+    if let Some(id_token) = id_token {
+        tokens.id_token = parse_id_token(&id_token).map_err(std::io::Error::other)?;
+    }
     if let Some(access_token) = access_token {
         tokens.access_token = access_token.to_string();
     }
@@ -568,17 +571,23 @@ async fn update_tokens(
 async fn try_refresh_token(
     refresh_token: String,
     client: &reqwest::Client,
+    mode: AuthMode,
 ) -> Result<RefreshResponse, RefreshTokenError> {
+    let (endpoint, client_id, scope) = match mode {
+        AuthMode::Anthropic => (ANTHROPIC_TOKEN_URL, ANTHROPIC_CLIENT_ID, "org:create_api_key user:profile user:inference"),
+        _ => ("https://auth.openai.com/oauth/token", CLIENT_ID, "openid profile email"),
+    };
+
     let refresh_request = RefreshRequest {
-        client_id: CLIENT_ID,
+        client_id,
         grant_type: "refresh_token",
         refresh_token,
-        scope: "openid profile email",
+        scope,
     };
 
     // Use shared client factory to include standard headers
     let response = client
-        .post("https://auth.openai.com/oauth/token")
+        .post(endpoint)
         .header("Content-Type", "application/json")
         .json(&refresh_request)
         .send()
@@ -586,10 +595,30 @@ async fn try_refresh_token(
         .map_err(|err| RefreshTokenError::transient(format!("network error: {err}")))?;
 
     if response.status().is_success() {
-        let refresh_response = response
+        let mut refresh_response = response
             .json::<RefreshResponse>()
             .await
             .map_err(|err| RefreshTokenError::transient(format!("invalid response: {err}")))?;
+
+        if refresh_response.id_token.is_none() {
+             // Synthesize fake ID token for Anthropic
+            let header = serde_json::json!({
+                "alg": "none",
+                "typ": "JWT"
+            });
+            let payload = serde_json::json!({
+                "email": "anthropic-user@placeholder.local",
+                "sub": "anthropic_user"
+            });
+            
+            let b64 = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+            let header_b64 = b64(&serde_json::to_vec(&header).unwrap_or_default());
+            let payload_b64 = b64(&serde_json::to_vec(&payload).unwrap_or_default());
+            let signature_b64 = b64(b"anthropic_user");
+            
+            refresh_response.id_token = Some(format!("{}.{}.{}", header_b64, payload_b64, signature_b64));
+        }
+
         return Ok(refresh_response);
     }
 
@@ -611,7 +640,7 @@ struct RefreshRequest {
 
 #[derive(Deserialize, Clone)]
 struct RefreshResponse {
-    id_token: String,
+    id_token: Option<String>,
     access_token: Option<String>,
     refresh_token: Option<String>,
 }
@@ -731,6 +760,8 @@ pub struct AuthDotJson {
 
 // Shared constant for token refresh (client id used for oauth token refresh flow)
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+pub const ANTHROPIC_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+pub const ANTHROPIC_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
 
 use std::sync::RwLock;
 

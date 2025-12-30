@@ -12,7 +12,7 @@ use code_cli::SeatbeltCommand;
 use code_cli::login::read_api_key_from_stdin;
 use code_cli::login::run_login_status;
 use code_cli::login::run_login_with_api_key;
-use code_cli::login::run_login_with_anthropic;
+// use code_cli::login::run_login_with_anthropic;
 use code_cli::login::run_login_with_anthropic_device_code;
 use code_cli::login::run_login_with_chatgpt;
 use code_cli::login::run_login_with_device_code;
