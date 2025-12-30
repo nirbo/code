@@ -338,9 +338,8 @@ impl App<'_> {
                     );
                 remote_manager.refresh_remote_models().await;
                 let remote_models = remote_manager.remote_models_snapshot().await;
-                if remote_models.is_empty() {
-                    return;
-                }
+                // NOTE: Even if remote_models is empty (e.g., Anthropic doesn't have a models API),
+                // we still send builtin presets so Claude models appear in the picker.
 
                 let auth_mode = remote_auth_manager
                     .auth()
@@ -803,9 +802,8 @@ impl App<'_> {
             );
             remote_manager.refresh_remote_models().await;
             let remote_models = remote_manager.remote_models_snapshot().await;
-            if remote_models.is_empty() {
-                return;
-            }
+            // NOTE: Even if remote_models is empty (e.g., Anthropic doesn't have a models API),
+            // we still send builtin presets so Claude models appear in the picker.
 
             let auth_mode = remote_auth_manager
                 .auth()
