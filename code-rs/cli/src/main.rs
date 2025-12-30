@@ -13,6 +13,7 @@ use code_cli::login::read_api_key_from_stdin;
 use code_cli::login::run_login_status;
 use code_cli::login::run_login_with_api_key;
 use code_cli::login::run_login_with_anthropic;
+use code_cli::login::run_login_with_anthropic_device_code;
 use code_cli::login::run_login_with_chatgpt;
 use code_cli::login::run_login_with_device_code;
 use code_cli::login::run_logout;
@@ -521,7 +522,9 @@ async fn cli_main(code_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()>
                     run_login_status(login_cli.config_overrides).await;
                 }
                 None => {
-                    if login_cli.use_device_code {
+                    if login_cli.use_device_code && login_cli.anthropic {
+                        run_login_with_anthropic_device_code(login_cli.config_overrides).await;
+                    } else if login_cli.use_device_code {
                         run_login_with_device_code(
                             login_cli.config_overrides,
                             login_cli.issuer_base_url,

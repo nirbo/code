@@ -35,41 +35,102 @@ pub enum OAuthProvider {
     ChatGPT,
     /// Anthropic Claude OAuth
     Anthropic,
+    /// Anthropic Claude Subscription (Pro/Max plans) via manual code flow
+    AnthropicSubscription,
 }
 
 impl OAuthProvider {
-    const fn issuer(self) -> &'static str {
+    pub const fn issuer(self) -> &'static str {
         match self {
             Self::ChatGPT => "https://auth.openai.com",
             Self::Anthropic => "https://anthropic.com",
+            Self::AnthropicSubscription => "https://claude.ai",
         }
     }
 
-    const fn client_id(self) -> &'static str {
+    pub const fn client_id(self) -> &'static str {
         match self {
             Self::ChatGPT => "9E1v8Y6n5I3xK2Lm",
             Self::Anthropic => "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+            Self::AnthropicSubscription => "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
         }
     }
 
-    const fn scopes(self) -> &'static str {
+    pub const fn scopes(self) -> &'static str {
         match self {
             Self::ChatGPT => "openid profile email offline_access",
             Self::Anthropic => "openid profile email offline_access",
+            Self::AnthropicSubscription => "org:create_api_key user:profile user:inference",
         }
     }
 
-    const fn authorize_path(self) -> &'static str {
+    pub const fn authorize_path(self) -> &'static str {
         match self {
             Self::ChatGPT => "/oauth/authorize",
             Self::Anthropic => "/oauth/authorize",
+            Self::AnthropicSubscription => "/oauth/authorize",
         }
     }
 
-    const fn token_path(self) -> &'static str {
+    pub const fn token_path(self) -> &'static str {
         match self {
             Self::ChatGPT => "/oauth/token",
             Self::Anthropic => "/oauth/token",
+            Self::AnthropicSubscription => "/v1/oauth/token",
+        }
+    }
+
+    /// Token endpoint base URL (may differ from issuer for some providers)
+    pub const fn token_base(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "https://auth.openai.com",
+            Self::Anthropic => "https://anthropic.com",
+            Self::AnthropicSubscription => "https://console.anthropic.com",
+        }
+    }
+
+    /// Redirect URI for manual code flow (headless authentication)
+    pub const fn manual_code_redirect_uri(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "urn:ietf:wg:oauth:2.0:oob:auto",
+            Self::Anthropic => "urn:ietf:wg:oauth:2.0:oob:auto",
+            Self::AnthropicSubscription => "https://console.anthropic.com/oauth/code/callback",
+        }
+    }
+
+    /// RFC 8628 Device Authorization endpoint
+    pub const fn device_authorization_path(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "/api/accounts/deviceauth/usercode",
+            Self::Anthropic => "/oauth/device_authorization",
+            Self::AnthropicSubscription => "/oauth/device_authorization",
+        }
+    }
+
+    /// Base issuer URL for device authorization
+    pub const fn device_authorization_base(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "https://auth.openai.com",
+            Self::Anthropic => "https://console.anthropic.com",
+            Self::AnthropicSubscription => "https://console.anthropic.com",
+        }
+    }
+
+    /// Verification URI for device code flow (where user enters code)
+    pub const fn device_verification_uri(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "https://auth.openai.com/deviceauth/authorize",
+            Self::Anthropic => "https://console.anthropic.com/device",
+            Self::AnthropicSubscription => "https://console.anthropic.com/device",
+        }
+    }
+
+    /// Whether this provider uses RFC 8628 standard device flow
+    pub const fn uses_rfc_8628_device_flow(self) -> bool {
+        match self {
+            Self::ChatGPT => false,
+            Self::Anthropic => true,
+            Self::AnthropicSubscription => false,
         }
     }
 }

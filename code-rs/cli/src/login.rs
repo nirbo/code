@@ -7,12 +7,10 @@ use code_core::auth::login_with_api_key;
 use code_core::auth::logout;
 use code_core::config::Config;
 use code_core::config::ConfigOverrides;
-use code_login::ServerOptions;
-use code_login::run_device_code_login;
-use code_login::run_login_server;
+use code_login::{OAuthProvider, ServerOptions};
+use code_login::{build_manual_auth_url, exchange_manual_auth_code, generate_pkce, generate_state, run_device_code_login, run_login_server};
 use std::env;
-use std::io::IsTerminal;
-use std::io::Read;
+use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 pub async fn login_with_chatgpt(code_home: PathBuf, originator: String) -> std::io::Result<()> {
@@ -74,6 +72,63 @@ pub async fn run_login_with_anthropic(cli_config_overrides: CliConfigOverrides) 
     {
         Ok(_) => {
             eprintln!("Successfully logged in with Anthropic");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Error logging in: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Login using manual token copy-paste flow for Anthropic.
+/// This is suitable for headless environments where a browser is not
+/// available on the same machine.
+pub async fn run_login_with_anthropic_device_code(
+    cli_config_overrides: CliConfigOverrides,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides);
+
+    // Generate PKCE codes and state
+    let pkce = generate_pkce();
+    let state = generate_state();
+
+    // Build authorization URL with Anthropic's subscription flow
+    // Uses https://console.anthropic.com/oauth/code/callback as redirect_uri
+    let auth_url = build_manual_auth_url(
+        OAuthProvider::AnthropicSubscription,
+        &pkce,
+        &state,
+        &config.responses_originator_header,
+    );
+
+    eprintln!("To authenticate with Anthropic (Pro/Max subscription):");
+    eprintln!("  1. Visit this URL in your browser:");
+    eprintln!("     {}", auth_url);
+    eprintln!("  2. Complete the sign-in in your browser");
+    eprintln!("  3. Copy the authorization code shown (it will contain a #)");
+    eprintln!();
+
+    // Prompt user for the code
+    eprint!("Enter the authorization code from your browser: ");
+    std::io::stdout().flush().ok();
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).expect("Failed to read input");
+    let auth_code = input.trim().to_string();
+
+    // Exchange the code for tokens
+    eprintln!("Exchanging authorization code for tokens...");
+    match exchange_manual_auth_code(
+        OAuthProvider::AnthropicSubscription,
+        &config.code_home,
+        &auth_code,
+        &pkce,
+        &state,
+    )
+    .await
+    {
+        Ok(()) => {
+            eprintln!("Successfully logged in with Anthropic subscription");
             std::process::exit(0);
         }
         Err(e) => {
