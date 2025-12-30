@@ -540,7 +540,9 @@ async fn cli_main(code_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()>
                         let api_key = read_api_key_from_stdin();
                         run_login_with_api_key(login_cli.config_overrides, api_key).await;
                     } else if login_cli.anthropic {
-                        run_login_with_anthropic(login_cli.config_overrides).await;
+                        // Default to manual flow (device code style) for Anthropic as localhost redirects
+                        // can be problematic or unsupported for this client ID.
+                        run_login_with_anthropic_device_code(login_cli.config_overrides).await;
                     } else {
                         run_login_with_chatgpt(login_cli.config_overrides).await;
                     }
