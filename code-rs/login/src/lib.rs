@@ -4,6 +4,7 @@ mod server;
 
 pub use device_code_auth::{run_device_code_login, DeviceCodeSession};
 pub use server::LoginServer;
+pub use server::OAuthProvider;
 pub use server::ServerOptions;
 pub use server::ShutdownHandle;
 pub use server::run_login_server;

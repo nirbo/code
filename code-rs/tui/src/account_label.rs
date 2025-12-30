@@ -22,6 +22,18 @@ pub(crate) fn account_display_label(account: &StoredAccount) -> String {
                         return trimmed.to_string();
                     }
                 }
+                AuthMode::Anthropic => {
+                    let default_email = account
+                        .tokens
+                        .as_ref()
+                        .and_then(|tokens| tokens.id_token.email.as_deref());
+                    if default_email.is_some_and(|email| trimmed.eq_ignore_ascii_case(email)) {
+                        // Fall back to the default Anthropic label format when the stored
+                        // label is just the raw email we persist automatically.
+                    } else {
+                        return trimmed.to_string();
+                    }
+                }
                 AuthMode::ApiKey => {
                     return trimmed.to_string();
                 }
@@ -36,6 +48,12 @@ pub(crate) fn account_display_label(account: &StoredAccount) -> String {
             .and_then(|tokens| tokens.id_token.email.clone())
             .map(|email| format!("ChatGPT ({email})"))
             .unwrap_or_else(|| "ChatGPT".to_string()),
+        AuthMode::Anthropic => account
+            .tokens
+            .as_ref()
+            .and_then(|tokens| tokens.id_token.email.clone())
+            .map(|email| format!("Anthropic ({email})"))
+            .unwrap_or_else(|| "Anthropic".to_string()),
         AuthMode::ApiKey => account
             .openai_api_key
             .as_ref()
@@ -54,6 +72,7 @@ pub(crate) fn key_suffix(text: &str) -> String {
 pub(crate) fn account_mode_priority(mode: AuthMode) -> u8 {
     match mode {
         AuthMode::ChatGPT => 0,
-        AuthMode::ApiKey => 1,
+        AuthMode::Anthropic => 1,
+        AuthMode::ApiKey => 2,
     }
 }

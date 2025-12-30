@@ -58,6 +58,7 @@ struct CandidateScore {
 fn account_has_credentials(account: &auth_accounts::StoredAccount) -> bool {
     match account.mode {
         AuthMode::ChatGPT => account.tokens.is_some(),
+        AuthMode::Anthropic => account.tokens.is_some(),
         AuthMode::ApiKey => account.openai_api_key.is_some(),
     }
 }

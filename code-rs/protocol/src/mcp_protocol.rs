@@ -99,6 +99,7 @@ impl GitSha {
 pub enum AuthMode {
     ApiKey,
     ChatGPT,
+    Anthropic,
 }
 
 /// Request from the client to the server.

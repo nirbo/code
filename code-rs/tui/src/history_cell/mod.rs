@@ -5448,6 +5448,14 @@ pub(crate) fn new_status_output(
                         "  • Method: ChatGPT account (account_id: {account_id})"
                     )));
                 }
+                AuthMode::Anthropic => {
+                    let account_id = auth
+                        .get_account_id()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    lines.push(Line::from(format!(
+                        "  • Method: Anthropic account (account_id: {account_id})"
+                    )));
+                }
             },
             _ => {
                 lines.push(Line::from("  • Method: unauthenticated"));

@@ -28,6 +28,52 @@ use tiny_http::Server;
 const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 const DEFAULT_PORT: u16 = 1455;
 
+/// OAuth provider configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OAuthProvider {
+    /// OpenAI ChatGPT OAuth
+    ChatGPT,
+    /// Anthropic Claude OAuth
+    Anthropic,
+}
+
+impl OAuthProvider {
+    const fn issuer(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "https://auth.openai.com",
+            Self::Anthropic => "https://anthropic.com",
+        }
+    }
+
+    const fn client_id(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "9E1v8Y6n5I3xK2Lm",
+            Self::Anthropic => "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        }
+    }
+
+    const fn scopes(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "openid profile email offline_access",
+            Self::Anthropic => "openid profile email offline_access",
+        }
+    }
+
+    const fn authorize_path(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "/oauth/authorize",
+            Self::Anthropic => "/oauth/authorize",
+        }
+    }
+
+    const fn token_path(self) -> &'static str {
+        match self {
+            Self::ChatGPT => "/oauth/token",
+            Self::Anthropic => "/oauth/token",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
     pub code_home: PathBuf,
@@ -37,6 +83,7 @@ pub struct ServerOptions {
     pub open_browser: bool,
     pub force_state: Option<String>,
     pub originator: String,
+    pub provider: OAuthProvider,
 }
 
 impl ServerOptions {
@@ -49,6 +96,25 @@ impl ServerOptions {
             open_browser: true,
             force_state: None,
             originator,
+            provider: OAuthProvider::ChatGPT,
+        }
+    }
+
+    /// Create ServerOptions for a specific OAuth provider
+    pub fn for_provider(
+        code_home: PathBuf,
+        provider: OAuthProvider,
+        originator: String,
+    ) -> Self {
+        Self {
+            code_home,
+            client_id: provider.client_id().to_string(),
+            issuer: provider.issuer().to_string(),
+            port: DEFAULT_PORT,
+            open_browser: true,
+            force_state: None,
+            originator,
+            provider,
         }
     }
 }
@@ -111,6 +177,7 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
         &pkce,
         &state,
         &opts.originator,
+        opts.provider,
     );
 
     if opts.open_browser {
@@ -233,7 +300,7 @@ async fn process_request(
                 }
             };
 
-            match exchange_code_for_tokens(&opts.issuer, &opts.client_id, redirect_uri, pkce, &code)
+            match exchange_code_for_tokens(&opts.issuer, &opts.client_id, redirect_uri, pkce, &code, opts.provider)
                 .await
             {
                 Ok(tokens) => {
@@ -314,25 +381,34 @@ fn build_authorize_url(
     pkce: &PkceCodes,
     state: &str,
     originator: &str,
+    provider: OAuthProvider,
 ) -> String {
-    let query = vec![
+    let scopes = provider.scopes();
+    let auth_path = provider.authorize_path();
+
+    let mut query = vec![
         ("response_type", "code"),
         ("client_id", client_id),
         ("redirect_uri", redirect_uri),
-        ("scope", "openid profile email offline_access"),
+        ("scope", scopes),
         ("code_challenge", &pkce.code_challenge),
         ("code_challenge_method", "S256"),
-        ("id_token_add_organizations", "true"),
-        ("code_cli_simplified_flow", "true"),
         ("state", state),
         ("originator", originator),
     ];
+
+    // Add ChatGPT-specific parameters
+    if provider == OAuthProvider::ChatGPT {
+        query.push(("id_token_add_organizations", "true"));
+        query.push(("code_cli_simplified_flow", "true"));
+    }
+
     let qs = query
         .into_iter()
         .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
         .collect::<Vec<_>>()
         .join("&");
-    format!("{issuer}/oauth/authorize?{qs}")
+    format!("{issuer}{auth_path}?{qs}")
 }
 
 fn generate_state() -> String {
@@ -415,6 +491,7 @@ pub(crate) async fn exchange_code_for_tokens(
     redirect_uri: &str,
     pkce: &PkceCodes,
     code: &str,
+    provider: OAuthProvider,
 ) -> io::Result<ExchangedTokens> {
     #[derive(serde::Deserialize)]
     struct TokenResponse {
@@ -423,9 +500,10 @@ pub(crate) async fn exchange_code_for_tokens(
         refresh_token: String,
     }
 
+    let token_path = provider.token_path();
     let client = code_core::http_client::build_http_client();
     let resp = client
-        .post(format!("{issuer}/oauth/token"))
+        .post(format!("{issuer}{token_path}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",

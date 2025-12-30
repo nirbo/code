@@ -229,6 +229,10 @@ impl CodexAuth {
                 let id_token = self.get_token_data().await?.access_token;
                 Ok(id_token)
             }
+            AuthMode::Anthropic => {
+                let id_token = self.get_token_data().await?.access_token;
+                Ok(id_token)
+            }
         }
     }
 
@@ -369,6 +373,17 @@ pub fn activate_account(code_home: &Path, account_id: &str) -> std::io::Result<(
         AuthMode::ChatGPT => {
             let tokens = account.tokens.clone().ok_or_else(|| {
                 std::io::Error::other("stored ChatGPT account is missing token data")
+            })?;
+            let auth = AuthDotJson {
+                openai_api_key: None,
+                tokens: Some(tokens),
+                last_refresh: account.last_refresh,
+            };
+            write_auth_json(&auth_file, &auth)?;
+        }
+        AuthMode::Anthropic => {
+            let tokens = account.tokens.clone().ok_or_else(|| {
+                std::io::Error::other("stored Anthropic account is missing token data")
             })?;
             let auth = AuthDotJson {
                 openai_api_key: None,

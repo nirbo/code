@@ -334,6 +334,7 @@ impl LoginAccountsState {
                 self.feedback = Some(Feedback {
                     message: match mode {
                         AuthMode::ChatGPT => "ChatGPT account selected".to_string(),
+                        AuthMode::Anthropic => "Anthropic account selected".to_string(),
                         AuthMode::ApiKey => "API key selected".to_string(),
                     },
                     is_error: false,

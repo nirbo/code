@@ -240,6 +240,7 @@ impl DeviceCodeSession {
             &redirect_uri,
             &pkce,
             &code_resp.authorization_code,
+            self.opts.provider,
         )
         .await
         .map_err(|err| std::io::Error::other(format!("device code exchange failed: {err}")))?;

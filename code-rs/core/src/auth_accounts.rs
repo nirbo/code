@@ -137,6 +137,32 @@ fn match_chatgpt_account(existing: &StoredAccount, tokens: &TokenData) -> bool {
     account_id_matches && email_matches
 }
 
+fn match_anthropic_account(existing: &StoredAccount, tokens: &TokenData) -> bool {
+    if existing.mode != AuthMode::Anthropic {
+        return false;
+    }
+
+    let existing_tokens = match &existing.tokens {
+        Some(tokens) => tokens,
+        None => return false,
+    };
+
+    let account_id_matches = match (&existing_tokens.account_id, &tokens.account_id) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    };
+
+    let email_matches = match (
+        existing_tokens.id_token.email.as_ref(),
+        tokens.id_token.email.as_ref(),
+    ) {
+        (Some(a), Some(b)) => normalize_email(a) == normalize_email(b),
+        _ => false,
+    };
+
+    account_id_matches && email_matches
+}
+
 fn match_api_key_account(existing: &StoredAccount, api_key: &str) -> bool {
     existing.mode == AuthMode::ApiKey
         && existing
@@ -160,6 +186,10 @@ fn upsert_account(mut data: AccountsFile, mut new_account: StoredAccount) -> (Ac
             .tokens
             .as_ref()
             .and_then(|tokens| data.accounts.iter().position(|acc| match_chatgpt_account(acc, tokens))),
+        AuthMode::Anthropic => new_account
+            .tokens
+            .as_ref()
+            .and_then(|tokens| data.accounts.iter().position(|acc| match_anthropic_account(acc, tokens))),
         AuthMode::ApiKey => new_account
             .openai_api_key
             .as_ref()

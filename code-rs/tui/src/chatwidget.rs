@@ -8273,6 +8273,7 @@ impl ChatWidget<'_> {
         let account_type = account
             .map(|acc| match acc.mode {
                 McpAuthMode::ChatGPT => "ChatGPT account",
+                McpAuthMode::Anthropic => "Anthropic account",
                 McpAuthMode::ApiKey => "API key",
             })
             .unwrap_or("Unknown account");

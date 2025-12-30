@@ -421,9 +421,12 @@ pub struct Config {
 
     /// Enable debug logging of LLM requests and responses
     pub debug: bool,
-    
+
     /// Whether we're using ChatGPT authentication (affects feature availability)
     pub using_chatgpt_auth: bool,
+
+    /// Whether we're using Anthropic authentication (affects feature availability)
+    pub using_anthropic_auth: bool,
 
     /// When true, automatically switch to another connected account when the
     /// current account hits a rate/usage limit.
@@ -2765,6 +2768,7 @@ impl Config {
 
         // Determine auth mode early so defaults like model selection can depend on it.
         let using_chatgpt_auth = Self::is_using_chatgpt_auth(&code_home);
+        let using_anthropic_auth = Self::is_using_anthropic_auth(&code_home);
 
         let auto_switch_accounts_on_rate_limit = config_profile
             .auto_switch_accounts_on_rate_limit
@@ -3139,6 +3143,7 @@ impl Config {
             debug: debug.unwrap_or(false),
             // Already computed before moving code_home
             using_chatgpt_auth,
+            using_anthropic_auth,
             auto_switch_accounts_on_rate_limit,
             api_key_fallback_on_all_accounts_limited,
             github: cfg.github.unwrap_or_default(),
@@ -3179,10 +3184,22 @@ impl Config {
     fn is_using_chatgpt_auth(code_home: &Path) -> bool {
         use code_app_server_protocol::AuthMode;
         use crate::CodexAuth;
-        
+
         // Prefer ChatGPT when both ChatGPT tokens and an API key are present.
         match CodexAuth::from_code_home(code_home, AuthMode::ChatGPT, "code_cli_rs") {
             Ok(Some(auth)) => auth.mode == AuthMode::ChatGPT,
+            _ => false,
+        }
+    }
+
+    /// Check if we're using Anthropic authentication
+    fn is_using_anthropic_auth(code_home: &Path) -> bool {
+        use code_app_server_protocol::AuthMode;
+        use crate::CodexAuth;
+
+        // Prefer Anthropic when both Anthropic tokens and an API key are present.
+        match CodexAuth::from_code_home(code_home, AuthMode::Anthropic, "code_cli_rs") {
+            Ok(Some(auth)) => auth.mode == AuthMode::Anthropic,
             _ => false,
         }
     }

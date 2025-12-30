@@ -41,6 +41,9 @@ pub(crate) enum SignInState {
     ChatGptContinueInBrowser(ContinueInBrowserState),
     ChatGptSuccessMessage,
     ChatGptSuccess,
+    AnthropicContinueInBrowser(ContinueInBrowserState),
+    AnthropicSuccessMessage,
+    AnthropicSuccess,
     EnvVarMissing,
     EnvVarFound,
 }
@@ -65,28 +68,45 @@ impl KeyboardHandler for AuthModeWidget {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.highlighted_mode = AuthMode::ChatGPT;
+                match self.highlighted_mode {
+                    AuthMode::ApiKey => self.highlighted_mode = AuthMode::ChatGPT,
+                    AuthMode::Anthropic => self.highlighted_mode = AuthMode::ApiKey,
+                    _ => {}
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.highlighted_mode = AuthMode::ApiKey;
+                match self.highlighted_mode {
+                    AuthMode::ChatGPT => self.highlighted_mode = AuthMode::ApiKey,
+                    AuthMode::ApiKey => self.highlighted_mode = AuthMode::Anthropic,
+                    _ => {}
+                }
             }
             KeyCode::Char('1') => {
                 self.start_chatgpt_login();
             }
             KeyCode::Char('2') => self.verify_api_key(),
+            KeyCode::Char('3') => {
+                self.start_anthropic_login();
+            }
             KeyCode::Enter => match self.sign_in_state {
                 SignInState::PickMode => match self.highlighted_mode {
                     AuthMode::ChatGPT => self.start_chatgpt_login(),
                     AuthMode::ApiKey => self.verify_api_key(),
+                    AuthMode::Anthropic => self.start_anthropic_login(),
                 },
                 SignInState::EnvVarMissing => self.sign_in_state = SignInState::PickMode,
                 SignInState::ChatGptSuccessMessage => {
                     self.sign_in_state = SignInState::ChatGptSuccess
                 }
+                SignInState::AnthropicSuccessMessage => {
+                    self.sign_in_state = SignInState::AnthropicSuccess
+                }
                 _ => {}
             },
             KeyCode::Esc => {
-                if matches!(self.sign_in_state, SignInState::ChatGptContinueInBrowser(_)) {
+                if matches!(self.sign_in_state, SignInState::ChatGptContinueInBrowser(_))
+                    || matches!(self.sign_in_state, SignInState::AnthropicContinueInBrowser(_))
+                {
                     self.sign_in_state = SignInState::PickMode;
                 }
             }
@@ -134,6 +154,7 @@ impl AuthModeWidget {
                 let to_label = |mode: AuthMode| match mode {
                     AuthMode::ApiKey => "API key",
                     AuthMode::ChatGPT => "ChatGPT",
+                    AuthMode::Anthropic => "Anthropic",
                 };
                 let msg = format!(
                     "  You’re currently using {} while your preferred method is {}.",
@@ -204,6 +225,18 @@ impl AuthModeWidget {
             api_key_label,
             "Pay for what you use",
         ));
+        let anthropic_label = if matches!(self.login_status, LoginStatus::AuthMode(AuthMode::Anthropic))
+        {
+            "Continue using Anthropic"
+        } else {
+            "Sign in with Anthropic"
+        };
+        lines.extend(create_mode_item(
+            2,
+            AuthMode::Anthropic,
+            anthropic_label,
+            "Requires Claude Pro or Team subscription",
+        ));
         lines.push(Line::from(""));
         lines.push(
             // AE: Following styles.md, this should probably be Cyan because it's a user input tip.
@@ -234,6 +267,18 @@ impl AuthModeWidget {
         spans.extend(shimmer_spans("Finish signing in via your browser"));
         let mut lines = vec![Line::from(spans), Line::from("")];
         if let SignInState::ChatGptContinueInBrowser(state) = &self.sign_in_state {
+            if !state.auth_url.is_empty() {
+                lines.push(Line::from("  If the link doesn't open automatically, open the following link to authenticate:"));
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    state.auth_url
+                        .as_str()
+                        .fg(crate::colors::info())
+                        .underlined(),
+                ]));
+                lines.push(Line::from(""));
+            }
+        } else if let SignInState::AnthropicContinueInBrowser(state) = &self.sign_in_state {
             if !state.auth_url.is_empty() {
                 lines.push(Line::from("  If the link doesn't open automatically, open the following link to authenticate:"));
                 lines.push(Line::from(vec![
@@ -296,6 +341,45 @@ impl AuthModeWidget {
 
     fn render_chatgpt_success(&self, area: Rect, buf: &mut Buffer) {
         let lines = vec![Line::from("✓ Signed in with your ChatGPT account").fg(crate::colors::success())];
+
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
+    fn render_anthropic_success_message(&self, area: Rect, buf: &mut Buffer) {
+        let lines = vec![
+            Line::from("✓ Signed in with your Anthropic account")
+                .fg(crate::colors::success()),
+            Line::from(""),
+            Line::from("> Before you start:"),
+            Line::from(""),
+            Line::from("  Decide how much autonomy you want to grant Code"),
+            Line::from(vec![
+                Span::raw("  For more details see the "),
+                Span::styled(
+                    "\u{1b}]8;;https://github.com/just-every/code\u{7}Code docs\u{1b}]8;;\u{7}",
+                    Style::default().add_modifier(Modifier::UNDERLINED),
+                ),
+            ])
+            .style(Style::default().add_modifier(Modifier::DIM)),
+            Line::from(""),
+            Line::from("  Code can make mistakes"),
+            Line::from("  Review the code it writes and commands it runs")
+                .style(Style::default().add_modifier(Modifier::DIM)),
+            Line::from(""),
+            Line::from("  Powered by your Anthropic subscription"),
+            Line::from(""),
+            Line::from("  Press Enter to continue").fg(crate::colors::info()),
+        ];
+
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
+    fn render_anthropic_success(&self, area: Rect, buf: &mut Buffer) {
+        let lines = vec![Line::from("✓ Signed in with your Anthropic account").fg(crate::colors::success())];
 
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -368,6 +452,48 @@ impl AuthModeWidget {
         }
     }
 
+    fn start_anthropic_login(&mut self) {
+        // If we're already authenticated with Anthropic, don't start a new login –
+        // just proceed to the success message flow.
+        if matches!(self.login_status, LoginStatus::AuthMode(AuthMode::Anthropic)) {
+            self.apply_anthropic_login_side_effects();
+            self.sign_in_state = SignInState::AnthropicSuccess;
+            self.event_tx.send(AppEvent::RequestRedraw);
+            return;
+        }
+
+        self.error = None;
+        let opts = ServerOptions::for_provider(
+            self.code_home.clone(),
+            code_login::OAuthProvider::Anthropic,
+            code_core::default_client::DEFAULT_ORIGINATOR.to_string(),
+        );
+        let server = run_login_server(opts);
+        match server {
+            Ok(child) => {
+                let auth_url = child.auth_url.clone();
+                let shutdown_handle = child.cancel_handle();
+
+                let event_tx = self.event_tx.clone();
+                let join_handle = tokio::spawn(async move {
+                    spawn_completion_poller(child, event_tx).await;
+                });
+                self.sign_in_state =
+                    SignInState::AnthropicContinueInBrowser(ContinueInBrowserState {
+                        auth_url,
+                        shutdown_handle: Some(shutdown_handle),
+                        _login_wait_handle: Some(join_handle),
+                    });
+                self.event_tx.send(AppEvent::RequestRedraw);
+            }
+            Err(e) => {
+                self.sign_in_state = SignInState::PickMode;
+                self.error = Some(e.to_string());
+                self.event_tx.send(AppEvent::RequestRedraw);
+            }
+        }
+    }
+
     /// TODO: Read/write from the correct hierarchy config overrides + auth json + OPENAI_API_KEY.
     fn verify_api_key(&mut self) {
         if matches!(self.login_status, LoginStatus::AuthMode(AuthMode::ApiKey)) {
@@ -399,6 +525,14 @@ impl AuthModeWidget {
             }
         }
     }
+
+    pub(crate) fn apply_anthropic_login_side_effects(&mut self) {
+        self.login_status = LoginStatus::AuthMode(AuthMode::Anthropic);
+        if let Ok(mut args) = self.chat_widget_args.lock() {
+            args.config.using_anthropic_auth = true;
+            // TODO: Set default Anthropic model if needed
+        }
+    }
 }
 
 async fn spawn_completion_poller(
@@ -422,8 +556,12 @@ impl StepStateProvider for AuthModeWidget {
             SignInState::PickMode
             | SignInState::EnvVarMissing
             | SignInState::ChatGptContinueInBrowser(_)
-            | SignInState::ChatGptSuccessMessage => StepState::InProgress,
-            SignInState::ChatGptSuccess | SignInState::EnvVarFound => StepState::Complete,
+            | SignInState::ChatGptSuccessMessage
+            | SignInState::AnthropicContinueInBrowser(_)
+            | SignInState::AnthropicSuccessMessage => StepState::InProgress,
+            SignInState::ChatGptSuccess
+            | SignInState::AnthropicSuccess
+            | SignInState::EnvVarFound => StepState::Complete,
         }
     }
 }
@@ -442,6 +580,15 @@ impl WidgetRef for AuthModeWidget {
             }
             SignInState::ChatGptSuccess => {
                 self.render_chatgpt_success(area, buf);
+            }
+            SignInState::AnthropicContinueInBrowser(_) => {
+                self.render_continue_in_browser(area, buf);
+            }
+            SignInState::AnthropicSuccessMessage => {
+                self.render_anthropic_success_message(area, buf);
+            }
+            SignInState::AnthropicSuccess => {
+                self.render_anthropic_success(area, buf);
             }
             SignInState::EnvVarMissing => {
                 self.render_env_var_missing(area, buf);
