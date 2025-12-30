@@ -152,3 +152,5 @@ branches/
 docs/release-notes/prompt.expanded.txt
 docs/release-notes/context.md
 prompts/projects/
+opencode-anthropic-auth
+sst-opencode

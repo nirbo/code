@@ -523,6 +523,28 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
                 openrouter: None,
             },
         ),
+        (
+            "anthropic",
+            P {
+                name: "Anthropic".into(),
+                base_url: Some("https://api.anthropic.com".into()),
+                // Uses OAuth subscription, not API key
+                env_key: None,
+                env_key_instructions: Some(
+                    "Use 'code login --anthropic' to authenticate with Claude Pro/Max subscription"
+                        .into(),
+                ),
+                wire_api: WireApi::Anthropic,
+                query_params: None,
+                http_headers: None,
+                env_http_headers: None,
+                request_max_retries: None,
+                stream_max_retries: None,
+                stream_idle_timeout_ms: None,
+                requires_openai_auth: false,
+                openrouter: None,
+            },
+        ),
         (BUILT_IN_OSS_MODEL_PROVIDER_ID, create_oss_provider()),
     ]
     .into_iter()

@@ -89,9 +89,11 @@ pub async fn run_login_with_anthropic_device_code(
 ) -> ! {
     let config = load_config_or_exit(cli_config_overrides);
 
-    // Generate PKCE codes and state
+    // Generate PKCE codes
     let pkce = generate_pkce();
-    let state = generate_state();
+    // For Anthropic subscription, use the pkce verifier as the state
+    // This matches the opencode-anthropic-auth reference implementation
+    let state = pkce.code_verifier.clone();
 
     // Build authorization URL with Anthropic's subscription flow
     // Uses https://console.anthropic.com/oauth/code/callback as redirect_uri

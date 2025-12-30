@@ -135,6 +135,7 @@ mod manual_auth {
         struct AnthropicTokenResponse {
             access_token: String,
             refresh_token: String,
+            #[allow(dead_code)]
             expires_in: u64,
         }
 

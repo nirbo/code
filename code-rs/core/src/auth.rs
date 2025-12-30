@@ -485,9 +485,14 @@ fn load_auth(
 
     // For the AuthMode::ChatGPT variant, perhaps neither api_key nor
     // openai_api_key should exist?
+    // Use the preferred auth method (ChatGPT or Anthropic, but not ApiKey) for token-based auth.
+    let token_mode = match preferred_auth_method {
+        AuthMode::ApiKey => AuthMode::ChatGPT, // Default to ChatGPT for token-based if ApiKey was preferred but we have tokens
+        other => other, // Use the actual preferred method (ChatGPT or Anthropic)
+    };
     Ok(Some(CodexAuth {
         api_key: None,
-        mode: AuthMode::ChatGPT,
+        mode: token_mode,
         auth_file,
         auth_dot_json: Arc::new(Mutex::new(Some(AuthDotJson {
             openai_api_key: None,

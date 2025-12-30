@@ -36,6 +36,7 @@ use super::onboarding_screen::StepState;
 // no additional imports
 
 #[derive(Debug)]
+#[allow(dead_code)] // AnthropicSuccessMessage is intended for the Anthropic auth flow
 pub(crate) enum SignInState {
     PickMode,
     ChatGptContinueInBrowser(ContinueInBrowserState),

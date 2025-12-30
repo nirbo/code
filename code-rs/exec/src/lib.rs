@@ -478,9 +478,15 @@ pub async fn run_main(cli: Cli, code_linux_sandbox_exe: Option<PathBuf>) -> anyh
         std::process::exit(1);
     }
 
+    // Determine auth mode based on provider - use Anthropic auth for Anthropic provider
+    let auth_mode = if config.model_provider_id.eq_ignore_ascii_case("anthropic") {
+        code_protocol::mcp_protocol::AuthMode::Anthropic
+    } else {
+        code_protocol::mcp_protocol::AuthMode::ApiKey
+    };
     let auth_manager = AuthManager::shared_with_mode_and_originator(
         config.code_home.clone(),
-        code_protocol::mcp_protocol::AuthMode::ApiKey,
+        auth_mode,
         config.responses_originator_header.clone(),
     );
     let conversation_manager = ConversationManager::new(auth_manager.clone(), SessionSource::Exec);

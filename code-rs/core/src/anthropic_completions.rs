@@ -102,10 +102,22 @@ pub(crate) async fn stream_anthropic_messages(
         "stream": true,
     });
 
-    // Add system prompt
-    if !system_prompt.is_empty() {
-        payload["system"] = json!(system_prompt);
-    }
+    // Build system prompt as an array of text blocks
+    // CRITICAL: For subscription OAuth tokens, Anthropic validates that the FIRST text block
+    // contains the Claude Code identity. The identity MUST be in its own separate block!
+    const CLAUDE_CODE_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+    
+    let system_blocks = if system_prompt.is_empty() {
+        // Only the identity block
+        json!([{"type": "text", "text": CLAUDE_CODE_IDENTITY}])
+    } else {
+        // Identity as first block, then additional instructions in a second block
+        json!([
+            {"type": "text", "text": CLAUDE_CODE_IDENTITY},
+            {"type": "text", "text": system_prompt}
+        ])
+    };
+    payload["system"] = system_blocks;
 
     // Add tools if present
     if !anthropic_tools.is_empty() {
@@ -113,9 +125,8 @@ pub(crate) async fn stream_anthropic_messages(
         payload["tool_choice"] = json!({ "type": "auto" });
     }
 
-    // Build the endpoint URL
-    let endpoint = provider.get_full_url(&auth_manager.as_ref().and_then(|a| a.auth()));
-    let url = format!("{}{}", endpoint, "/v1/messages");
+    // Build the endpoint URL (get_full_url already appends /v1/messages for WireApi::Anthropic)
+    let url = provider.get_full_url(&auth_manager.as_ref().and_then(|a| a.auth()));
 
     debug!(
         "POST to {}: {}",
@@ -130,18 +141,35 @@ pub(crate) async fn stream_anthropic_messages(
         attempt += 1;
 
         // Build the request with auth
-        let auth = auth_manager.as_ref().and_then(|m| m.auth());
         let mut req_builder = client
             .post(&url)
             .header(reqwest::header::ACCEPT, "text/event-stream")
+            .header(reqwest::header::USER_AGENT, "claude-code/20250219")
             .header("anthropic-version", "2023-06-01")
+            // NOTE: anthropic-beta header with oauth-2025-04-20 is required for OAuth subscription tokens!
+            // See opencode-anthropic-auth plugin for reference implementation
+            .header(
+                "anthropic-beta",
+                "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
+            )
             .json(&payload);
 
-        // Add Bearer token if available
+        // Add OAuth token as Authorization: Bearer header (NOT X-API-Key)
+        // Reference: opencode-anthropic-auth plugin uses Bearer token for OAuth subscription tokens
+        let auth = auth_manager.as_ref().and_then(|m| m.auth());
         if let Some(auth) = auth.as_ref() {
-            if let Ok(token) = auth.get_token().await {
-                req_builder = req_builder.bearer_auth(&token);
+            debug!("Anthropic auth mode: {:?}", auth.mode);
+            match auth.get_token().await {
+                Ok(token) => {
+                    debug!("Anthropic token first 30 chars: {}...", &token[..30.min(token.len())]);
+                    req_builder = req_builder.bearer_auth(&token);
+                }
+                Err(e) => {
+                    debug!("Failed to get Anthropic token: {:?}", e);
+                }
             }
+        } else {
+            debug!("No auth manager or auth available for Anthropic request");
         }
 
         // Add any provider-specific headers
