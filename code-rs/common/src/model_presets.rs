@@ -471,19 +471,10 @@ pub fn builtin_model_presets(auth_mode: Option<AuthMode>) -> Vec<ModelPreset> {
     PRESETS
         .iter()
         .filter(|preset| match auth_mode {
-            Some(AuthMode::ApiKey) => {
-                // API key mode: show GPT models (exclude gpt-5.2-codex), no Claude
-                preset.id != "gpt-5.2-codex" && !preset.id.starts_with("claude-")
-            }
-            Some(AuthMode::Anthropic) => {
-                // Anthropic auth: show only Claude models
-                preset.id.starts_with("claude-")
-            }
-            Some(AuthMode::ChatGPT) => {
-                // ChatGPT auth: show OpenAI models only, no Claude
-                !preset.id.starts_with("claude-")
-            }
-            None => true, // No auth mode yet; show all
+            // API key mode: gpt-5.2-codex requires ChatGPT auth, exclude it
+            Some(AuthMode::ApiKey) => preset.id != "gpt-5.2-codex",
+            // All other modes: show all models from all providers
+            _ => true,
         })
         .filter(|preset| preset.show_in_picker)
         .cloned()
