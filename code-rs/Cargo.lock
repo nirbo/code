@@ -892,6 +892,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "code-anthropic"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "code-core",
+ "code-protocol",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "code-app-server"
 version = "0.0.0"
 dependencies = [

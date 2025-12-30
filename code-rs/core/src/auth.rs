@@ -330,6 +330,22 @@ pub fn logout(code_home: &Path) -> std::io::Result<bool> {
     Ok(removed)
 }
 
+/// Initialize Anthropic token from auth.json file.
+/// This function loads the Anthropic authentication token and returns it.
+/// Returns None if no Anthropic auth is configured.
+pub async fn init_anthropic_token_from_auth(
+    code_home: &Path,
+    originator: &str,
+) -> std::io::Result<Option<TokenData>> {
+    let auth = CodexAuth::from_code_home(code_home, AuthMode::Anthropic, originator)?;
+    if let Some(auth) = auth {
+        let token_data = auth.get_token_data().await?;
+        Ok(Some(token_data))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Writes an `auth.json` that contains only the API key. Intended for CLI use.
 pub fn login_with_api_key(code_home: &Path, api_key: &str) -> std::io::Result<()> {
     let auth_dot_json = AuthDotJson {

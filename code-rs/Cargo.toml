@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "anthropic",
     "backend-client",
     "ansi-escape",
     "app-server",
@@ -53,6 +54,7 @@ code-app-server-protocol = { path = "app-server-protocol" }
 code-apply-patch = { path = "apply-patch" }
 code-arg0 = { path = "arg0" }
 code-browser = { path = "browser" }
+code-anthropic = { path = "anthropic" }
 code-chatgpt = { path = "chatgpt" }
 code-common = { path = "common" }
 code-core = { path = "core" }
