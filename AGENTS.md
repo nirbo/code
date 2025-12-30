@@ -1,6 +1,6 @@
 # REMINDER
 
-Always read @CLAUDE.md for rules of developing within this codebase.
+Always read CLAUDE.md for rules of developing within this codebase.
 
 # Agent Instructions
 
