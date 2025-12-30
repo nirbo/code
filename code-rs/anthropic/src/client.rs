@@ -79,10 +79,16 @@ impl AnthropicClient {
         );
 
         // Build the HTTP request
+        // NOTE: The anthropic-beta header is required for OAuth subscription tokens to work!
+        // oauth-2025-04-20 enables Bearer token auth for Pro/Max subscriptions
         let req_builder = self
             .http_client
             .post(&url)
             .header("anthropic-version", API_VERSION_HEADER)
+            .header(
+                "anthropic-beta",
+                "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
+            )
             .header(CONTENT_TYPE, "application/json")
             .header(USER_AGENT, "codex-cli/1.0")
             .bearer_auth(&self.api_key)

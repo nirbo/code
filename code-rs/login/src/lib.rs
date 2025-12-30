@@ -57,6 +57,12 @@ mod manual_auth {
             query.push(("originator", originator));
         }
 
+        // Add code=true for Anthropic subscription (required by their OAuth flow)
+        let code_true = "true".to_string();
+        if matches!(provider, OAuthProvider::AnthropicSubscription) {
+            query.push(("code", &code_true));
+        }
+
         let qs = query
             .into_iter()
             .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
@@ -137,8 +143,8 @@ mod manual_auth {
         let auth_code = splits.first().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "Authorization code is empty")
         })?;
-        // Note: state is included in the code but we don't need to validate it separately
-        // since the PKCE verifier is already bound to the original request
+        // State is included after the # and must be sent in the token request
+        let code_state = splits.get(1).copied().unwrap_or("");
 
         let client = code_core::http_client::build_http_client();
         let resp = client
@@ -146,6 +152,7 @@ mod manual_auth {
             .header("Content-Type", "application/json")
             .body(serde_json::json!({
                 "code": auth_code,
+                "state": code_state,
                 "grant_type": "authorization_code",
                 "client_id": OAuthProvider::AnthropicSubscription.client_id(),
                 "redirect_uri": OAuthProvider::AnthropicSubscription.manual_code_redirect_uri(),
@@ -168,11 +175,24 @@ mod manual_auth {
             .await
             .map_err(io::Error::other)?;
 
-        // Create a minimal id_token for compatibility (Anthropic doesn't provide one)
-        // We'll use a JWT-like format with the account email
-        let _expires_at = Utc::now() + chrono::Duration::seconds(token_resp.expires_in as i64);
+        // Create a minimal JWT for compatibility (Anthropic doesn't provide an id_token)
+        // The parse_id_token function expects a proper JWT format: header.payload.signature
         use base64::Engine;
-        let id_token = format!("anthropic_subscription_{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&token_resp.access_token));
+        
+        let header = serde_json::json!({
+            "alg": "none",
+            "typ": "JWT"
+        });
+        let payload = serde_json::json!({
+            "email": "anthropic-subscription@placeholder.local",
+            "sub": "anthropic_subscription"
+        });
+        
+        let b64 = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        let header_b64 = b64(&serde_json::to_vec(&header).map_err(io::Error::other)?);
+        let payload_b64 = b64(&serde_json::to_vec(&payload).map_err(io::Error::other)?);
+        let signature_b64 = b64(b"anthropic_subscription");
+        let id_token = format!("{}.{}.{}", header_b64, payload_b64, signature_b64);
 
         let tokens = TokenData {
             id_token: code_core::token_data::parse_id_token(&id_token).map_err(io::Error::other)?,
