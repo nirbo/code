@@ -59,7 +59,7 @@ impl OAuthProvider {
     pub const fn scopes(self) -> &'static str {
         match self {
             Self::ChatGPT => "openid profile email offline_access",
-            Self::Anthropic => "openid profile email offline_access",
+            Self::Anthropic => "org:create_api_key user:profile user:inference",
             Self::AnthropicSubscription => "org:create_api_key user:profile user:inference",
         }
     }
@@ -568,7 +568,7 @@ pub(crate) async fn exchange_code_for_tokens(
 ) -> io::Result<ExchangedTokens> {
     #[derive(serde::Deserialize)]
     struct TokenResponse {
-        id_token: String,
+        id_token: Option<String>,
         access_token: String,
         refresh_token: String,
     }
@@ -597,8 +597,31 @@ pub(crate) async fn exchange_code_for_tokens(
     }
 
     let tokens: TokenResponse = resp.json().await.map_err(io::Error::other)?;
+    
+    let id_token = if let Some(token) = tokens.id_token {
+        token
+    } else {
+        // Generate synthetic ID token for Anthropic (or others missing it)
+        // Format: header.payload.signature
+        let header = serde_json::json!({
+            "alg": "none",
+            "typ": "JWT"
+        });
+        let payload = serde_json::json!({
+            "email": "anthropic-user@placeholder.local",
+            "sub": "anthropic_user"
+        });
+        
+        let b64 = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        let header_b64 = b64(&serde_json::to_vec(&header).map_err(io::Error::other)?);
+        let payload_b64 = b64(&serde_json::to_vec(&payload).map_err(io::Error::other)?);
+        let signature_b64 = b64(b"anthropic_user");
+        
+        format!("{}.{}.{}", header_b64, payload_b64, signature_b64)
+    };
+
     Ok(ExchangedTokens {
-        id_token: tokens.id_token,
+        id_token,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
     })
