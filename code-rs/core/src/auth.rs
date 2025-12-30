@@ -775,7 +775,7 @@ pub struct AuthDotJson {
 // Shared constant for token refresh (client id used for oauth token refresh flow)
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const ANTHROPIC_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-pub const ANTHROPIC_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+pub const ANTHROPIC_TOKEN_URL: &str = "https://claude.ai/v1/oauth/token";
 
 use std::sync::RwLock;
 

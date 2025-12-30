@@ -149,7 +149,7 @@ mod manual_auth {
 
         let client = code_core::http_client::build_http_client();
         let resp = client
-            .post("https://console.anthropic.com/v1/oauth/token")
+            .post("https://claude.ai/v1/oauth/token")
             .header("Content-Type", "application/json")
             .body(serde_json::json!({
                 "code": auth_code,
