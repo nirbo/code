@@ -43,7 +43,7 @@ impl OAuthProvider {
     pub const fn issuer(self) -> &'static str {
         match self {
             Self::ChatGPT => "https://auth.openai.com",
-            Self::Anthropic => "https://anthropic.com",
+            Self::Anthropic => "https://claude.ai",
             Self::AnthropicSubscription => "https://claude.ai",
         }
     }
@@ -75,7 +75,7 @@ impl OAuthProvider {
     pub const fn token_path(self) -> &'static str {
         match self {
             Self::ChatGPT => "/oauth/token",
-            Self::Anthropic => "/oauth/token",
+            Self::Anthropic => "/v1/oauth/token",
             Self::AnthropicSubscription => "/v1/oauth/token",
         }
     }
@@ -84,7 +84,7 @@ impl OAuthProvider {
     pub const fn token_base(self) -> &'static str {
         match self {
             Self::ChatGPT => "https://auth.openai.com",
-            Self::Anthropic => "https://anthropic.com",
+            Self::Anthropic => "https://console.anthropic.com",
             Self::AnthropicSubscription => "https://console.anthropic.com",
         }
     }
@@ -216,7 +216,14 @@ impl ShutdownHandle {
 
 pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
     let pkce = generate_pkce();
-    let state = opts.force_state.clone().unwrap_or_else(generate_state);
+    
+    // For Anthropic, state MUST be the pkce code_verifier
+    // For others, use force_state or generate random
+    let state = if opts.provider == OAuthProvider::Anthropic {
+        pkce.code_verifier.clone()
+    } else {
+        opts.force_state.clone().unwrap_or_else(generate_state)
+    };
 
     let server = bind_server(opts.port)?;
     let actual_port = match server.server_addr().to_ip() {
@@ -457,6 +464,11 @@ fn build_authorize_url(
         ("state", state),
         ("originator", originator),
     ];
+    
+    // Add code=true for Anthropic (required by their OAuth flow)
+    if matches!(provider, OAuthProvider::Anthropic | OAuthProvider::AnthropicSubscription) {
+        query.push(("code", "true"));
+    }
 
     // Add ChatGPT-specific parameters
     if provider == OAuthProvider::ChatGPT {

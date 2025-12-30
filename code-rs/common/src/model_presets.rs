@@ -401,7 +401,7 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
         ModelPreset {
             id: "anthropic".to_string(),
             model: "claude-sonnet-4-5".to_string(), // Default to Sonnet (balanced)
-            display_name: "Anthropic".to_string(),
+            display_name: "Anthropic Claude".to_string(),
             description: "Claude models with extended thinking. Select model tier below.".to_string(),
             default_reasoning_effort: ReasoningEffort::Medium, // Medium = Sonnet
             supported_reasoning_efforts: vec![
