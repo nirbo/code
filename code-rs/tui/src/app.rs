@@ -328,6 +328,7 @@ impl App<'_> {
             let remote_provider = config.model_provider.clone();
             let remote_code_home = config.code_home.clone();
             let remote_using_chatgpt_hint = config.using_chatgpt_auth;
+            let remote_provider_id = config.model_provider_id.clone();
             if !crate::chatwidget::is_test_mode() {
                 tokio::spawn(async move {
                     let remote_manager = code_core::remote_models::RemoteModelsManager::new(
@@ -345,7 +346,9 @@ impl App<'_> {
                     .auth()
                     .map(|auth| auth.mode)
                     .or_else(|| {
-                        if remote_using_chatgpt_hint {
+                        if remote_provider_id.eq_ignore_ascii_case("anthropic") {
+                            Some(code_protocol::mcp_protocol::AuthMode::Anthropic)
+                        } else if remote_using_chatgpt_hint {
                             Some(code_protocol::mcp_protocol::AuthMode::ChatGPT)
                         } else {
                             Some(code_protocol::mcp_protocol::AuthMode::ApiKey)
@@ -791,6 +794,7 @@ impl App<'_> {
         let remote_provider = self.config.model_provider.clone();
         let remote_code_home = self.config.code_home.clone();
         let remote_using_chatgpt_hint = self.config.using_chatgpt_auth;
+        let remote_provider_id = self.config.model_provider_id.clone();
         tokio::spawn(async move {
             let remote_manager = code_core::remote_models::RemoteModelsManager::new(
                 remote_auth_manager.clone(),
@@ -807,7 +811,9 @@ impl App<'_> {
                 .auth()
                 .map(|auth| auth.mode)
                 .or_else(|| {
-                    if remote_using_chatgpt_hint {
+                    if remote_provider_id.eq_ignore_ascii_case("anthropic") {
+                        Some(code_protocol::mcp_protocol::AuthMode::Anthropic)
+                    } else if remote_using_chatgpt_hint {
                         Some(code_protocol::mcp_protocol::AuthMode::ChatGPT)
                     } else {
                         Some(code_protocol::mcp_protocol::AuthMode::ApiKey)
