@@ -6,6 +6,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
+
 use bytes::Bytes;
 use code_otel::otel_event_manager::OtelEventManager;
 use eventsource_stream::Eventsource;
@@ -30,6 +32,7 @@ use crate::model_provider_info::ModelProviderInfo;
 use crate::openai_tools::create_tools_json_for_chat_completions_api;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
+use crate::protocol::RateLimitSnapshotEvent;
 use crate::util::backoff;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -211,8 +214,17 @@ pub(crate) async fn stream_anthropic_messages(
         match res {
             Ok(resp) if resp.status().is_success() => {
                 debug!("Anthropic stream initiated successfully");
+                
+                // Parse Anthropic rate limit headers before consuming the response
+                let rate_limits = parse_anthropic_rate_limits(resp.headers());
 
                 let (tx_event, rx_event) = mpsc::channel::<Result<ResponseEvent>>(1600);
+                
+                // Send rate limits event if available
+                if let Some(rate_limit_event) = rate_limits {
+                    let _ = tx_event.send(Ok(ResponseEvent::RateLimits(rate_limit_event))).await;
+                }
+                
                 let stream = resp.bytes_stream().map_err(CodexErr::Reqwest);
 
                 tokio::spawn(process_anthropic_sse(
@@ -714,5 +726,70 @@ async fn process_anthropic_sse<S>(
                 }
             }
         }
+    }
+}
+
+/// Parse Anthropic rate limit headers from the response.
+/// Anthropic provides these headers:
+/// - anthropic-ratelimit-requests-limit/remaining/reset
+/// - anthropic-ratelimit-tokens-limit/remaining/reset
+fn parse_anthropic_rate_limits(headers: &reqwest::header::HeaderMap) -> Option<RateLimitSnapshotEvent> {
+    // Extract request limits
+    let requests_limit = parse_header_u64(headers, "anthropic-ratelimit-requests-limit")?;
+    let requests_remaining = parse_header_u64(headers, "anthropic-ratelimit-requests-remaining")?;
+    
+    // Extract token limits
+    let tokens_limit = parse_header_u64(headers, "anthropic-ratelimit-tokens-limit")?;
+    let tokens_remaining = parse_header_u64(headers, "anthropic-ratelimit-tokens-remaining")?;
+    
+    // Calculate used percentages
+    let requests_used_percent = if requests_limit > 0 {
+        ((requests_limit - requests_remaining) as f64 / requests_limit as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    let tokens_used_percent = if tokens_limit > 0 {
+        ((tokens_limit - tokens_remaining) as f64 / tokens_limit as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    // Parse reset times (RFC 3339 format) - convert to seconds from now
+    let requests_reset_seconds = parse_reset_to_seconds(headers, "anthropic-ratelimit-requests-reset");
+    let tokens_reset_seconds = parse_reset_to_seconds(headers, "anthropic-ratelimit-tokens-reset");
+    
+    Some(RateLimitSnapshotEvent {
+        // Map requests to "primary" window
+        primary_used_percent: requests_used_percent,
+        primary_window_minutes: 1, // Anthropic typically uses per-minute limits
+        primary_reset_after_seconds: requests_reset_seconds,
+        // Map tokens to "secondary" window  
+        secondary_used_percent: tokens_used_percent,
+        secondary_window_minutes: 1,
+        secondary_reset_after_seconds: tokens_reset_seconds,
+        // Ratio not directly applicable for Anthropic
+        primary_to_secondary_ratio_percent: 100.0,
+    })
+}
+
+fn parse_header_u64(headers: &reqwest::header::HeaderMap, name: &str) -> Option<u64> {
+    headers.get(name)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+}
+
+fn parse_reset_to_seconds(headers: &reqwest::header::HeaderMap, name: &str) -> Option<u64> {
+    let reset_str = headers.get(name)?.to_str().ok()?;
+    
+    // Parse RFC 3339 timestamp and calculate seconds from now
+    let reset_time = chrono::DateTime::parse_from_rfc3339(reset_str).ok()?;
+    let now = chrono::Utc::now();
+    let duration = reset_time.signed_duration_since(now);
+    
+    if duration.num_seconds() > 0 {
+        Some(duration.num_seconds() as u64)
+    } else {
+        Some(0)
     }
 }
