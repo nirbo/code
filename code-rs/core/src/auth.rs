@@ -484,13 +484,16 @@ fn load_auth(
         }
     }
 
-    // For the AuthMode::ChatGPT variant, perhaps neither api_key nor
-    // openai_api_key should exist?
-    // Use the preferred auth method (ChatGPT or Anthropic, but not ApiKey) for token-based auth.
-    let token_mode = match preferred_auth_method {
-        AuthMode::ApiKey => AuthMode::ChatGPT, // Default to ChatGPT for token-based if ApiKey was preferred but we have tokens
-        other => other, // Use the actual preferred method (ChatGPT or Anthropic)
+    // If the auth.json has tokens, infer the mode from the access token prefix
+    // if the caller hasn't explicitly preferred Anthropic.
+    let token_mode = match &tokens {
+        Some(t) if t.access_token.starts_with("sk-ant-") => AuthMode::Anthropic,
+        _ => match preferred_auth_method {
+            AuthMode::ApiKey => AuthMode::ChatGPT,
+            other => other,
+        },
     };
+
     Ok(Some(CodexAuth {
         api_key: None,
         mode: token_mode,
@@ -588,11 +591,18 @@ async fn try_refresh_token(
         ),
     };
 
+    // EXHAUSTIVE LOGGING FOR ULTRATHINK REMOVED
+
+    let scope_for_request = match mode {
+        AuthMode::Anthropic => None, // claude.ai refresh requires NO scope
+        _ => Some(scope.to_string()),
+    };
+
     let refresh_request = RefreshRequest {
         client_id,
         grant_type: "refresh_token",
         refresh_token,
-        scope,
+        scope: scope_for_request,
         redirect_uri,
     };
 
@@ -611,6 +621,16 @@ async fn try_refresh_token(
             .json::<RefreshResponse>()
             .await
             .map_err(|err| RefreshTokenError::transient(format!("invalid response: {err}")))?;
+
+        eprintln!("ULTRATHINK: Refresh SUCCESS!");
+        if let Some(at) = &refresh_response.access_token {
+             eprintln!("ULTRATHINK: New Token: {}...", &at[..15.min(at.len())]);
+        }
+        if let Some(scope) = &refresh_response.scope {
+             eprintln!("ULTRATHINK: Refresh Granted Scopes: {}", scope);
+        } else {
+             eprintln!("ULTRATHINK: Refresh Granted Scopes: <none>");
+        }
 
         if refresh_response.id_token.is_none() {
              // Synthesize fake ID token for Anthropic
@@ -643,13 +663,14 @@ async fn try_refresh_token(
 }
 
 #[derive(Serialize)]
-struct RefreshRequest {
-    client_id: &'static str,
-    grant_type: &'static str,
+struct RefreshRequest<'a> {
+    client_id: &'a str,
+    grant_type: &'a str,
     refresh_token: String,
-    scope: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    redirect_uri: Option<&'static str>,
+    scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirect_uri: Option<&'a str>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -657,6 +678,7 @@ struct RefreshResponse {
     id_token: Option<String>,
     access_token: Option<String>,
     refresh_token: Option<String>,
+    scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -775,7 +797,7 @@ pub struct AuthDotJson {
 // Shared constant for token refresh (client id used for oauth token refresh flow)
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const ANTHROPIC_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-pub const ANTHROPIC_TOKEN_URL: &str = "https://claude.ai/v1/oauth/token";
+pub const ANTHROPIC_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
 
 use std::sync::RwLock;
 
