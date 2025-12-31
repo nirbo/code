@@ -15,6 +15,7 @@ use futures::TryStreamExt;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::debug;
+use tracing::error;
 use tracing::trace;
 
 use crate::auth::AuthManager;
@@ -490,6 +491,12 @@ async fn process_anthropic_sse<S>(
     let _ = tx_event.send(Ok(ResponseEvent::Created)).await;
 
     let mut current_index: Option<u32> = None;
+    
+    // Tool use tracking
+    let mut current_tool_id: Option<String> = None;
+    let mut current_tool_name: Option<String> = None;
+    let mut current_tool_input: String = String::new();
+    let mut current_block_type: Option<String> = None;
 
     loop {
         let sse = match stream.next().await {
@@ -550,23 +557,117 @@ async fn process_anthropic_sse<S>(
                             current_index = Some(index as u32);
                             trace!("Content block {} started", index);
                         }
+                        
+                        // Check for tool_use content block
+                        if let Some(content_block) = event.get("content_block") {
+                            if let Some(block_type) = content_block.get("type").and_then(|v| v.as_str()) {
+                                current_block_type = Some(block_type.to_string());
+                                
+                                if block_type == "tool_use" {
+                                    // Start tracking this tool use
+                                    current_tool_id = content_block.get("id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    current_tool_name = content_block.get("name")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    current_tool_input.clear();
+                                    
+                                    debug!(
+                                        "Tool use started: id={:?}, name={:?}",
+                                        current_tool_id, current_tool_name
+                                    );
+                                }
+                            }
+                        }
                     }
                     "content_block_delta" => {
                         if let Some(delta) = event.get("delta") {
-                            if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                            if let Some(delta_type) = delta.get("type").and_then(|v| v.as_str()) {
+                                match delta_type {
+                                    "text_delta" => {
+                                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                            let _ = tx_event
+                                                .send(Ok(ResponseEvent::OutputTextDelta {
+                                                    delta: text.to_string(),
+                                                    item_id: None,
+                                                    sequence_number: None,
+                                                    output_index: current_index,
+                                                }))
+                                                .await;
+                                        }
+                                    }
+                                    "input_json_delta" => {
+                                        // Accumulate partial JSON for tool input
+                                        if let Some(partial_json) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                                            current_tool_input.push_str(partial_json);
+                                            trace!("Tool input delta: {}", partial_json);
+                                        }
+                                    }
+                                    "thinking_delta" => {
+                                        // Extended thinking support - emit as reasoning
+                                        if let Some(thinking) = delta.get("thinking").and_then(|v| v.as_str()) {
+                                            let _ = tx_event
+                                                .send(Ok(ResponseEvent::ReasoningContentDelta {
+                                                    delta: thinking.to_string(),
+                                                    item_id: None,
+                                                    sequence_number: None,
+                                                    output_index: current_index,
+                                                    content_index: current_index,
+                                                }))
+                                                .await;
+                                        }
+                                    }
+                                    _ => {
+                                        trace!("Unknown delta type: {}", delta_type);
+                                    }
+                                }
+                            } else {
+                                // Fallback for older format without explicit type
+                                if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                    let _ = tx_event
+                                        .send(Ok(ResponseEvent::OutputTextDelta {
+                                            delta: text.to_string(),
+                                            item_id: None,
+                                            sequence_number: None,
+                                            output_index: current_index,
+                                        }))
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                    "content_block_stop" => {
+                        // If we were tracking a tool use, emit it now
+                        if current_block_type.as_deref() == Some("tool_use") {
+                            if let (Some(tool_id), Some(tool_name)) = 
+                                (current_tool_id.take(), current_tool_name.take()) 
+                            {
+                                let arguments = std::mem::take(&mut current_tool_input);
+                                
+                                debug!(
+                                    "Tool use complete: id={}, name={}, args_len={}",
+                                    tool_id, tool_name, arguments.len()
+                                );
+                                
+                                // Emit FunctionCall response item
                                 let _ = tx_event
-                                    .send(Ok(ResponseEvent::OutputTextDelta {
-                                        delta: text.to_string(),
-                                        item_id: None,
+                                    .send(Ok(ResponseEvent::OutputItemDone {
+                                        item: ResponseItem::FunctionCall {
+                                            id: Some(format!("fc_{}", tool_id)),
+                                            name: tool_name,
+                                            arguments,
+                                            call_id: tool_id,
+                                        },
                                         sequence_number: None,
                                         output_index: current_index,
                                     }))
                                     .await;
                             }
                         }
-                    }
-                    "content_block_stop" => {
+                        
                         current_index = None;
+                        current_block_type = None;
                     }
                     "message_stop" => {
                         debug!("Message stopped");
@@ -578,8 +679,27 @@ async fn process_anthropic_sse<S>(
                             .await;
                         return;
                     }
+                    "message_delta" => {
+                        // Could extract usage info here if needed
+                        trace!("Message delta received");
+                    }
                     "ping" => {
                         trace!("Ping received");
+                    }
+                    "error" => {
+                        let error_msg = event.get("error")
+                            .and_then(|e| e.get("message"))
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown error");
+                        error!("Anthropic error: {}", error_msg);
+                        let _ = tx_event
+                            .send(Err(CodexErr::Stream(
+                                format!("Anthropic error: {}", error_msg),
+                                None,
+                                Some(request_id.clone()),
+                            )))
+                            .await;
+                        return;
                     }
                     _ => {
                         trace!("Unknown event type: {}", event_type);
