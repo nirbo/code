@@ -18,6 +18,7 @@ use std::cmp::Ordering;
 #[derive(Clone, Debug)]
 struct FlatPreset {
     model: String,
+    display_name: String,
     effort: ReasoningEffort,
     label: String,
     description: String,
@@ -32,6 +33,7 @@ impl FlatPreset {
                 let effort_label = Self::effort_label(effort_preset.effort.into());
                 FlatPreset {
                     model: preset.model.to_string(),
+                    display_name: preset.display_name.to_string(),
                     effort: effort_preset.effort.into(),
                     label: format!("{} {}", preset.display_name, effort_label.to_lowercase()),
                     description: effort_preset.description.to_string(),
@@ -677,7 +679,7 @@ impl ModelSelectionView {
                     lines.push(Line::from(""));
                 }
                 lines.push(Line::from(vec![Span::styled(
-                    Self::format_model_header(&flat_preset.model),
+                    &flat_preset.display_name,
                     Style::default()
                         .fg(crate::colors::text_bright())
                         .add_modifier(Modifier::BOLD),
