@@ -100,9 +100,8 @@ pub(crate) async fn stream_anthropic_messages(
     let mut payload = json!({
         "model": model_slug,
         "messages": anthropic_messages,
-        "max_tokens": 8192,
+        "max_tokens": 16384,  // Increased to support extended thinking output
         "stream": true,
-        // "service_tier": "standard_only", // Removed: potential 401 cause
     });
 
     // Build system prompt as an array of text blocks
@@ -121,6 +120,14 @@ pub(crate) async fn stream_anthropic_messages(
         ])
     };
     payload["system"] = system_blocks;
+    
+    // Enable Extended Thinking for Claude models
+    // This allows Claude to show its reasoning process
+    // Budget tokens determine how much "thinking" Claude can do (minimum 1024, max ~128k)
+    payload["thinking"] = json!({
+        "type": "enabled",
+        "budget_tokens": 10000  // Reasonable budget for complex reasoning
+    });
 
     // Add tools if present
     if !anthropic_tools.is_empty() {
