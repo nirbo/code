@@ -6,8 +6,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
-
 use bytes::Bytes;
 use code_otel::otel_event_manager::OtelEventManager;
 use eventsource_stream::Eventsource;
