@@ -759,7 +759,7 @@ pub fn create_wait_tool() -> OpenAiTool {
     properties.insert(
         "call_id".to_string(),
         JsonSchema::String {
-            description: Some("Background call_id to wait for.".to_string()),
+            description: Some("The call_id of a backgrounded command to wait for.".to_string()),
             allowed_values: None,
         },
     );
@@ -774,7 +774,7 @@ pub fn create_wait_tool() -> OpenAiTool {
     );
     OpenAiTool::Function(ResponsesApiTool {
         name: "wait".to_string(),
-        description: "Wait for the background command identified by call_id to finish (optionally bounded by timeout_ms).".to_string(),
+        description: "Wait for a backgrounded command to finish. Only use this if a previous shell command indicated it was backgrounded. If a command already returned its output, do not call wait.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
