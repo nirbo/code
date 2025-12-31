@@ -28,7 +28,8 @@ pub const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 pub const API_VERSION_HEADER: &str = "2023-06-01";
 
 /// Anthropic Messages API path.
-pub const MESSAGES_API_PATH: &str = "/v1/messages";
+/// CRITICAL: ?beta=true is required for subscription OAuth tokens to work!
+pub const MESSAGES_API_PATH: &str = "/v1/messages?beta=true";
 
 /// Errors that can occur when using the Anthropic client.
 pub type Result<T> = std::result::Result<T, AnthropicError>;

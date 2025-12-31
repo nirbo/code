@@ -311,7 +311,12 @@ impl ModelProviderInfo {
         match self.wire_api {
             WireApi::Responses => format!("{base_url}/responses{query_string}"),
             WireApi::Chat => format!("{base_url}/chat/completions{query_string}"),
-            WireApi::Anthropic => format!("{base_url}/v1/messages{query_string}"),
+            // CRITICAL: Subscription OAuth tokens require ?beta=true parameter
+            // Source: Web search revealed Claude Code uses https://api.anthropic.com/v1/messages?beta=true
+            WireApi::Anthropic => {
+                let beta_param = if query_string.is_empty() { "?beta=true" } else { "&beta=true" };
+                format!("{base_url}/v1/messages{query_string}{beta_param}")
+            }
         }
     }
 

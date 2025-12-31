@@ -229,13 +229,57 @@ pub enum ReasoningItemReasoningSummary {
 
 ### Required Headers for API Requests
 
+> [!TIP]
+> **RESOLVED (2025-12-30):** Anthropic subscription OAuth tokens now work correctly!
+> 
+> **Root Cause:** The `-m claude-*` flag only sets the model name, but the `model_provider_id` 
+> defaulted to `"openai"`, causing requests to go to the wrong API with the Anthropic token.
+>
+> **Fix:** Implemented provider auto-detection in `config.rs` (lines 2633-2656):
+> - `claude-*` → `anthropic` provider
+> - `gemini-*` → `google` provider
+> - `qwen-*` → `openrouter` provider
+> 
+> **Code Linkage:**
+> ```
+> model_presets.rs (id: "anthropic", model: "claude-sonnet-4-5")
+>         ↓ preset.id matches provider key
+> model_provider_info.rs ("anthropic" → wire_api: WireApi::Anthropic)
+>         ↓ provider.wire_api routing
+> client.rs:430-454 (WireApi::Anthropic → stream_anthropic_messages())
+>         ↓ function call
+> anthropic_completions.rs (stream_anthropic_messages() - actual API call)
+> ```
+
+**For Subscription OAuth (Claude Pro/Max):**
+```http
+POST https://api.anthropic.com/v1/messages?beta=true
+Authorization: Bearer {oauth_access_token}
+anthropic-version: 2023-06-01
+anthropic-beta: oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14
+content-type: application/json
+User-Agent: claude-code/20250219
+```
+
+**For API Keys (Developer/Console):**
 ```http
 POST https://api.anthropic.com/v1/messages
-Authorization: Bearer {access_token}
+x-api-key: {api_key}
 anthropic-version: 2023-06-01
-anthropic-beta: oauth-2025-04-20  ← REQUIRED for OAuth!
 content-type: application/json
 ```
+
+### All Discovered Endpoints (from Claude Code source)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `https://api.anthropic.com/api/oauth/claude` | **Subscription OAuth Messages API** |
+| `https://api.anthropic.com/v1/messages` | API Key Messages API (NOT for OAuth!) |
+| `https://claude.ai/oauth/authorize` | OAuth Authorization |
+| `https://console.anthropic.com/v1/oauth/token` | Token Exchange/Refresh |
+| `https://console.anthropic.com/oauth/code/callback` | OAuth Callback |
+| `https://api.anthropic.com/api/hello` | Health check |
+| `https://api.anthropic.com/api/organization/` | Organization info |
 
 ### Token Refresh Flow
 

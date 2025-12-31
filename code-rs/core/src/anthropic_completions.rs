@@ -75,6 +75,8 @@ pub(crate) async fn stream_anthropic_messages(
     _otel_event_manager: Option<OtelEventManager>,
     log_tag: Option<&str>,
 ) -> Result<ResponseStream> {
+    trace!("stream_anthropic_messages: model={}, provider={:?}", model_slug, provider.name);
+
     if prompt.output_schema.is_some() {
         return Err(CodexErr::UnsupportedOperation(
             "output_schema is not supported for Anthropic Messages API".to_string(),
@@ -94,13 +96,12 @@ pub(crate) async fn stream_anthropic_messages(
     let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
     let anthropic_tools = to_anthropic_tools(&tools_json);
 
-    // Build the request payload
     let mut payload = json!({
         "model": model_slug,
         "messages": anthropic_messages,
         "max_tokens": 8192,
         "stream": true,
-        "service_tier": "standard_only", // Required for restricted subscription credentials
+        // "service_tier": "standard_only", // Removed: potential 401 cause
     });
 
     // Build system prompt as an array of text blocks
@@ -182,6 +183,7 @@ pub(crate) async fn stream_anthropic_messages(
 
         // Log the request
         if request_id.is_empty() {
+
             if let Ok(logger) = debug_logger.lock() {
                 request_id = logger
                     .start_request_log(
@@ -193,6 +195,8 @@ pub(crate) async fn stream_anthropic_messages(
                     .unwrap_or_default();
             }
         }
+
+        trace!("Anthropic request: attempt={}, url={}", attempt, url);
 
         let res = req_builder.send().await;
 
@@ -215,20 +219,45 @@ pub(crate) async fn stream_anthropic_messages(
             }
             Ok(res) => {
                 let status = res.status();
-                if !(status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
-                    let body = res.text().await.unwrap_or_default();
+                let response_body = res.text().await.unwrap_or_default();
+                
+                debug!("Anthropic response: status={}, body_len={}", status, response_body.len());
+                
+                if !(status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() || status == reqwest::StatusCode::UNAUTHORIZED) {
                     return Err(CodexErr::UnexpectedStatus(crate::error::UnexpectedResponseError {
                         status,
-                        body,
+                        body: response_body,
                         request_id: None,
                     }));
+                }
+
+                // If 401 Unauthorized, force a token refresh before retrying
+                if status == reqwest::StatusCode::UNAUTHORIZED {
+                    debug!("Anthropic 401 Unauthorized: triggering token refresh");
+                    if let Some(am) = auth_manager.as_ref() {
+                        match am.refresh_token_classified().await {
+                            Ok(Some(new_token)) => {
+                                debug!("Token refreshed via 401 handler, prefix: {}...", &new_token[..10.min(new_token.len())]);
+                                // Token refreshed, continue loop to retry with new token
+                                continue; 
+                            }
+                            Ok(None) => {
+                                debug!("No refreshable token found");
+                            }
+                            Err(e) => {
+                                debug!("Force refresh failed: {:?}", e);
+                            }
+                        }
+                    } else {
+                        debug!("No AuthManager to refresh token");
+                    }
                 }
 
                 if attempt > max_retries {
                     return Err(CodexErr::RetryLimit(crate::error::RetryLimitReachedError {
                         status,
                         request_id: None,
-                        retryable: status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS,
+                        retryable: status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS || status == reqwest::StatusCode::UNAUTHORIZED,
                     }));
                 }
 

@@ -2630,9 +2630,30 @@ impl Config {
             model_providers.entry(key).or_insert(provider);
         }
 
+        // Auto-detect provider from model name if not explicitly set
+        // This allows `-m claude-sonnet-4-5` to automatically use the anthropic provider
+        let inferred_model_name = model
+            .as_ref()
+            .or(config_profile.model.as_ref())
+            .or(cfg.model.as_ref());
+        
+        let inferred_provider = inferred_model_name.and_then(|m| {
+            let m_lower = m.to_ascii_lowercase();
+            if m_lower.starts_with("claude-") || m_lower.starts_with("anthropic/") {
+                Some("anthropic".to_string())
+            } else if m_lower.starts_with("gemini-") || m_lower.starts_with("google/") {
+                Some("google".to_string())
+            } else if m_lower.starts_with("qwen-") {
+                Some("openrouter".to_string())
+            } else {
+                None // Default to openai
+            }
+        });
+
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
             .or(cfg.model_provider)
+            .or(inferred_provider)
             .unwrap_or_else(|| "openai".to_string());
         let model_provider = model_providers
             .get(&model_provider_id)
