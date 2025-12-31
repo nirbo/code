@@ -122,13 +122,16 @@ pub(crate) async fn stream_anthropic_messages(
     };
     payload["system"] = system_blocks;
     
-    // Enable Extended Thinking for Claude models
-    // This allows Claude to show its reasoning process
-    // Budget tokens determine how much "thinking" Claude can do (minimum 1024, max ~128k)
-    payload["thinking"] = json!({
-        "type": "enabled",
-        "budget_tokens": 10000  // Reasonable budget for complex reasoning
-    });
+    // NOTE: Extended Thinking is NOT enabled by default.
+    // When thinking is enabled, Anthropic requires that assistant messages with tool_use
+    // also include the thinking blocks from that turn. This breaks multi-turn conversations
+    // with tools unless we persist and replay thinking content in conversation history.
+    // See: https://docs.claude.com/en/docs/build-with-claude/extended-thinking
+    // 
+    // To enable in the future, would need to:
+    // 1. Capture thinking blocks from responses
+    // 2. Include them in conversation history before tool_use blocks
+    // 3. Or use "redacted_thinking" placeholders
 
     // Add tools if present
     if !anthropic_tools.is_empty() {
