@@ -551,7 +551,7 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
             "zai",
             P {
                 name: "Z.AI".into(),
-                base_url: Some("https://api.zai.com/v1".into()),
+                base_url: Some("https://api.z.ai/api/coding/paas/v4".into()),
                 env_key: Some("Z_AI_API_KEY".into()),
                 env_key_instructions: Some(
                     "Set Z_AI_API_KEY to your Z.AI API key (from https://zai.com/settings/api-keys)"
