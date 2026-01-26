@@ -41,6 +41,8 @@ const QWEN_3_CODER_READ_ONLY: &[&str] = &[];
 const QWEN_3_CODER_WRITE: &[&str] = &["-y"];
 const CLOUD_GPT5_CODEX_READ_ONLY: &[&str] = &[];
 const CLOUD_GPT5_CODEX_WRITE: &[&str] = &[];
+const GLM_4_7_READ_ONLY: &[&str] = &[];
+const GLM_4_7_WRITE: &[&str] = &["-y"];
 
 /// Canonical list of built-in agent model slugs used when no `[[agents]]`
 /// entries are configured. The ordering here controls priority for legacy
@@ -59,6 +61,7 @@ pub const DEFAULT_AGENT_NAMES: &[&str] = &[
     "claude-haiku-4.5",
     "qwen-3-coder",
     "cloud-gpt-5.1-codex-max",
+    "glm-4.7",
 ];
 
 #[derive(Debug, Clone)]
@@ -257,6 +260,19 @@ const AGENT_MODEL_SPECS: &[AgentModelSpec] = &[
         enabled_by_default: false,
         aliases: &["cloud-gpt-5.1-codex", "cloud-gpt-5-codex", "cloud"],
         gating_env: Some(CLOUD_MODEL_ENV_FLAG),
+        is_frontline: false,
+    },
+    AgentModelSpec {
+        slug: "glm-4.7",
+        family: "zai",
+        cli: "zai",
+        read_only_args: GLM_4_7_READ_ONLY,
+        write_args: GLM_4_7_WRITE,
+        model_args: &["--model", "glm-4.7"],
+        description: "Reasoning model from Z.AI; strong alternative for complex planning and cross-checking.",
+        enabled_by_default: true,
+        aliases: &["glm", "glm4", "glm-4"],
+        gating_env: None,
         is_frontline: false,
     },
 ];
