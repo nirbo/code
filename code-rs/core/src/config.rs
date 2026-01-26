@@ -1070,15 +1070,17 @@ impl Config {
             .or_else(|| cfg.model.clone())
             .unwrap_or_else(|| default_model_slug.to_string());
 
-        let mut model_provider_id = model_provider
+        let model_provider_id = model_provider
             .clone()
             .or(config_profile.model_provider.clone())
             .or(cfg.model_provider.clone())
-            .unwrap_or_else(|| "openai".to_string());
-
-        if model.eq_ignore_ascii_case("glm-4.7") && model_provider.is_none() {
-            model_provider_id = "zai".to_string();
-        }
+            .unwrap_or_else(|| {
+                if model.eq_ignore_ascii_case("glm-4.7") {
+                    "zai".to_string()
+                } else {
+                    "openai".to_string()
+                }
+            });
 
         let model_provider = model_providers
             .get(&model_provider_id)

@@ -224,9 +224,9 @@ impl CodexAuth {
 
     pub async fn get_token(&self) -> Result<String, std::io::Error> {
         match self.mode {
-            AuthMode::ApiKey => Ok(self.api_key.clone().unwrap_or_default()),
+            AuthMode::ApiKey | AuthMode::ZaiKey => Ok(self.api_key.clone().unwrap_or_default()),
             AuthMode::ChatGPT => {
-                let id_token = self.get_token_data().await?.access_token;
+               let id_token = self.get_token_data().await?.access_token;
                 Ok(id_token)
             }
         }
@@ -255,6 +255,7 @@ impl CodexAuth {
     pub fn create_dummy_chatgpt_auth_for_testing() -> Self {
         let auth_dot_json = AuthDotJson {
             openai_api_key: None,
+            zai_api_key: None,
             tokens: Some(TokenData {
                 id_token: Default::default(),
                 access_token: "Access Token".to_string(),
@@ -291,6 +292,23 @@ impl CodexAuth {
         )
     }
 
+    fn from_zai_key_with_client(api_key: &str, client: reqwest::Client) -> Self {
+        Self {
+            api_key: Some(api_key.to_owned()),
+            mode: AuthMode::ZaiKey,
+            auth_file: PathBuf::new(),
+            auth_dot_json: Arc::new(Mutex::new(None)),
+            client,
+        }
+    }
+
+    pub fn from_zai_key(api_key: &str) -> Self {
+        Self::from_zai_key_with_client(
+            api_key,
+            crate::default_client::create_client(crate::default_client::DEFAULT_ORIGINATOR),
+        )
+    }
+
     pub fn from_tokens_with_originator(
         tokens: TokenData,
         last_refresh: Option<DateTime<Utc>>,
@@ -298,6 +316,7 @@ impl CodexAuth {
     ) -> Self {
         let auth_dot_json = AuthDotJson {
             openai_api_key: None,
+            zai_api_key: None,
             tokens: Some(tokens),
             last_refresh,
         };
@@ -317,6 +336,12 @@ pub const CODEX_API_KEY_ENV_VAR: &str = "CODEX_API_KEY";
 
 fn read_openai_api_key_from_env() -> Option<String> {
     env::var(OPENAI_API_KEY_ENV_VAR)
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+fn read_zai_api_key_from_env() -> Option<String> {
+    env::var("Z_AI_API_KEY")
         .ok()
         .filter(|s| !s.is_empty())
 }
@@ -350,9 +375,11 @@ pub fn logout(code_home: &Path) -> std::io::Result<bool> {
 pub fn login_with_api_key(code_home: &Path, api_key: &str) -> std::io::Result<()> {
     let auth_dot_json = AuthDotJson {
         openai_api_key: Some(api_key.to_string()),
+            zai_api_key: None,
         tokens: None,
         last_refresh: None,
     };
+ 
     write_auth_json(&get_auth_file(code_home), &auth_dot_json)?;
     let _ = crate::auth_accounts::upsert_api_key_account(
         code_home,
@@ -442,7 +469,17 @@ pub async fn auth_for_stored_account(
                 originator,
             ))
         }
+        AuthMode::ZaiKey => {
+            let api_key = account.zai_api_key.clone().ok_or_else(|| {
+                std::io::Error::other("stored Z.AI key account is missing the key value")
+            })?;
+            Ok(CodexAuth::from_zai_key_with_client(
+                &api_key,
+                crate::default_client::create_client(originator),
+            ))
+        }
     }
+ 
 }
 
 /// Activate a stored account by writing its credentials to auth.json and
@@ -463,6 +500,7 @@ pub fn activate_account(code_home: &Path, account_id: &str) -> std::io::Result<(
             })?;
             let auth = AuthDotJson {
                 openai_api_key: Some(api_key),
+                zai_api_key: None,
                 tokens: None,
                 last_refresh: None,
             };
@@ -474,12 +512,26 @@ pub fn activate_account(code_home: &Path, account_id: &str) -> std::io::Result<(
             })?;
             let auth = AuthDotJson {
                 openai_api_key: None,
+                zai_api_key: None,
                 tokens: Some(tokens),
                 last_refresh: account.last_refresh,
             };
             write_auth_json(&auth_file, &auth)?;
         }
+        AuthMode::ZaiKey => {
+            let api_key = account.zai_api_key.clone().ok_or_else(|| {
+                std::io::Error::other("stored Z.AI key account is missing the key value")
+            })?;
+            let auth = AuthDotJson {
+                openai_api_key: None,
+                zai_api_key: Some(api_key),
+                tokens: None,
+                last_refresh: None,
+            };
+            write_auth_json(&auth_file, &auth)?;
+        }
     }
+ 
 
     let _ = crate::auth_accounts::set_active_account_id(code_home, Some(account_id_owned))?;
     Ok(())
@@ -502,10 +554,13 @@ fn load_auth(
         // If auth.json does not exist, try to read the OPENAI_API_KEY from the
         // environment variable.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && include_env_var => {
-            return match read_openai_api_key_from_env() {
-                Some(api_key) => Ok(Some(CodexAuth::from_api_key_with_client(&api_key, client))),
-                None => Ok(None),
-            };
+            if let Some(api_key) = read_openai_api_key_from_env() {
+                return Ok(Some(CodexAuth::from_api_key_with_client(&api_key, client)));
+            } else if let Some(zai_key) = read_zai_api_key_from_env() {
+                return Ok(Some(CodexAuth::from_zai_key_with_client(&zai_key, client)));
+            } else {
+                return Ok(None);
+            }
         }
         // Though if auth.json exists but is malformed, do not fall back to the
         // env var because the user may be expecting to use AuthMode::ChatGPT.
@@ -516,6 +571,7 @@ fn load_auth(
 
     let AuthDotJson {
         openai_api_key: auth_json_api_key,
+        zai_api_key: auth_json_zai_key,
         tokens,
         last_refresh,
     } = auth_dot_json;
@@ -554,6 +610,13 @@ fn load_auth(
         }
     }
 
+    if let Some(api_key) = &auth_json_zai_key {
+        if preferred_auth_method == AuthMode::ZaiKey {
+            return Ok(Some(CodexAuth::from_zai_key_with_client(api_key, client)));
+        }
+    }
+ 
+
     // For the AuthMode::ChatGPT variant, perhaps neither api_key nor
     // openai_api_key should exist?
     Ok(Some(CodexAuth {
@@ -562,6 +625,7 @@ fn load_auth(
         auth_file,
         auth_dot_json: Arc::new(Mutex::new(Some(AuthDotJson {
             openai_api_key: None,
+            zai_api_key: None,
             tokens,
             last_refresh,
         }))),
@@ -788,6 +852,9 @@ pub struct AuthDotJson {
     #[serde(rename = "OPENAI_API_KEY")]
     pub openai_api_key: Option<String>,
 
+    #[serde(rename = "Z_AI_API_KEY", default, skip_serializing_if = "Option::is_none")]
+    pub zai_api_key: Option<String>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<TokenData>,
 
@@ -828,6 +895,7 @@ mod tests {
         let _ = write_auth_file(
             AuthFileParams {
                 openai_api_key: None,
+            zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             code_home.path(),
@@ -874,6 +942,7 @@ mod tests {
         let fake_jwt = write_auth_file(
             AuthFileParams {
                 openai_api_key: None,
+            zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             code_home.path(),
@@ -897,6 +966,7 @@ mod tests {
         assert_eq!(
             &AuthDotJson {
                 openai_api_key: None,
+            zai_api_key: None,
                 tokens: Some(TokenData {
                     id_token: IdTokenInfo {
                         email: Some("user@example.com".to_string()),
@@ -926,6 +996,7 @@ mod tests {
         let fake_jwt = write_auth_file(
             AuthFileParams {
                 openai_api_key: Some("sk-test-key".to_string()),
+            zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             code_home.path(),
@@ -949,6 +1020,7 @@ mod tests {
         assert_eq!(
             &AuthDotJson {
                 openai_api_key: None,
+            zai_api_key: None,
                 tokens: Some(TokenData {
                     id_token: IdTokenInfo {
                         email: Some("user@example.com".to_string()),
@@ -977,6 +1049,7 @@ mod tests {
         write_auth_file(
             AuthFileParams {
                 openai_api_key: Some("sk-test-key".to_string()),
+            zai_api_key: None,
                 chatgpt_plan_type: "enterprise".to_string(),
             },
             code_home.path(),
@@ -1023,6 +1096,7 @@ mod tests {
         let dir = tempdir()?;
         let auth_dot_json = AuthDotJson {
             openai_api_key: Some("sk-test-key".to_string()),
+            zai_api_key: None,
             tokens: None,
             last_refresh: None,
         };
@@ -1104,6 +1178,7 @@ mod tests {
         let fake_jwt = write_auth_file(
             AuthFileParams {
                 openai_api_key: None,
+            zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             dir.path(),
@@ -1119,6 +1194,7 @@ mod tests {
 
         let cached_auth = AuthDotJson {
             openai_api_key: None,
+            zai_api_key: None,
             tokens: Some(cached_tokens.clone()),
             last_refresh: None,
         };
@@ -1132,6 +1208,7 @@ mod tests {
 
         let rotated_auth = AuthDotJson {
             openai_api_key: None,
+            zai_api_key: None,
             tokens: Some(rotated_tokens.clone()),
             last_refresh: Some(Utc::now()),
         };

@@ -1610,6 +1610,11 @@ fn apply_model_selection(config: &mut Config, model: &str, effort: ReasoningEffo
                     config.model_provider_id = "zai".to_string();
                 }
             }
+        } else if config.model_provider_id.eq_ignore_ascii_case("zai") {
+            if let Some(p) = code_core::built_in_model_providers().get("openai") {
+                config.model_provider = p.clone();
+                config.model_provider_id = "openai".to_string();
+            }
         }
 
         updated = true;

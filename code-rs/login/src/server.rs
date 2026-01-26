@@ -486,6 +486,7 @@ pub(crate) async fn persist_tokens_async(
         let last_refresh = Utc::now();
         let auth = AuthDotJson {
             openai_api_key: api_key,
+            zai_api_key: None,
             tokens: Some(tokens),
             last_refresh: Some(last_refresh),
         };

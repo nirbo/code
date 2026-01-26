@@ -275,7 +275,13 @@ impl ModelProviderInfo {
         }
 
         match self.api_key() {
-            Ok(Some(key)) => Ok(Some(CodexAuth::from_api_key(&key))),
+            Ok(Some(key)) => {
+                if self.env_key.as_deref() == Some("Z_AI_API_KEY") {
+                    Ok(Some(CodexAuth::from_zai_key(&key)))
+                } else {
+                    Ok(Some(CodexAuth::from_api_key(&key)))
+                }
+            }
             Ok(None) => Ok(auth.clone()),
             Err(err) => {
                 if auth.is_some() {

@@ -8768,6 +8768,7 @@ impl ChatWidget<'_> {
             .map(|acc| match acc.mode {
                 McpAuthMode::ChatGPT => "ChatGPT account",
                 McpAuthMode::ApiKey => "API key",
+                McpAuthMode::ZaiKey => "Z.AI key",
             })
             .unwrap_or("Unknown account");
 
@@ -8777,7 +8778,7 @@ impl ChatWidget<'_> {
             .unwrap_or("Unknown");
 
         let value_style = Style::default().fg(crate::colors::text_dim());
-        let is_api_key = matches!(account.map(|acc| acc.mode), Some(McpAuthMode::ApiKey));
+        let is_api_key = matches!(account.map(|acc| acc.mode), Some(McpAuthMode::ApiKey) | Some(McpAuthMode::ZaiKey));
         let totals = usage
             .map(|u| u.totals.clone())
             .unwrap_or_default();
@@ -21966,11 +21967,7 @@ Have we met every part of this goal and is there no further work to do?"#
         if let Some(presets) = self.remote_model_presets.as_ref() {
             return presets.clone();
         }
-        let auth_mode = if self.config.using_chatgpt_auth {
-            Some(McpAuthMode::ChatGPT)
-        } else {
-            Some(McpAuthMode::ApiKey)
-        };
+        let auth_mode = self.auth_manager.auth().map(|a| a.mode);
         builtin_model_presets(auth_mode)
     }
 
@@ -22339,6 +22336,32 @@ Have we met every part of this goal and is there no further work to do?"#
             .unwrap_or(requested)
     }
 
+    fn update_provider_for_model(&mut self, model: &str) -> bool {
+        const ZAI_PROVIDER_ID: &str = "zai";
+        const GLM_4_7_MODEL: &str = "glm-4.7";
+
+        if model.eq_ignore_ascii_case(GLM_4_7_MODEL) {
+            if !self.config.model_provider_id.eq_ignore_ascii_case(ZAI_PROVIDER_ID) {
+                if let Some(provider) = self.config.model_providers.get(ZAI_PROVIDER_ID) {
+                    self.config.model_provider_id = ZAI_PROVIDER_ID.to_string();
+                    self.config.model_provider = provider.clone();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if self.config.model_provider_id.eq_ignore_ascii_case(ZAI_PROVIDER_ID) {
+            if let Some(provider) = self.config.model_providers.get("openai") {
+                self.config.model_provider_id = "openai".to_string();
+                self.config.model_provider = provider.clone();
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn apply_model_selection_inner(
         &mut self,
         model: String,
@@ -22363,17 +22386,10 @@ Have we met every part of this goal and is there no further work to do?"#
                 .unwrap_or_else(|| derive_default_model_family(&self.config.model));
             self.config.model_family = family;
 
-            if self.config.model.eq_ignore_ascii_case("glm-4.7") {
-                if !self.config.model_provider_id.eq_ignore_ascii_case("zai") {
-                    let providers = code_core::built_in_model_providers();
-                    if let Some(p) = providers.get("zai") {
-                        self.config.model_provider = p.clone();
-                        self.config.model_provider_id = "zai".to_string();
-                    }
-                }
+            if self.update_provider_for_model(trimmed) {
+                updated = true;
             }
 
-            updated = true;
         }
 
         if let Some(explicit) = effort {

@@ -335,7 +335,9 @@ impl LoginAccountsState {
                     message: match mode {
                         AuthMode::ChatGPT => "ChatGPT account selected".to_string(),
                         AuthMode::ApiKey => "API key selected".to_string(),
+                        AuthMode::ZaiKey => "Z.AI key selected".to_string(),
                     },
+ 
                     is_error: false,
                 });
                 self.reload_accounts();
@@ -631,6 +633,7 @@ impl<'a> BottomPaneView<'a> for LoginAddAccountView {
 enum AddStep {
     Choose { selected: usize },
     ApiKey { field: FormTextField },
+    ZaiKey { field: FormTextField },
     Waiting { auth_url: Option<String> },
     DeviceCode(DeviceCodeState),
 }
@@ -689,7 +692,7 @@ impl LoginAddAccountState {
                     self.finish_and_show_accounts();
                 }
                 KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
-                    *selected = if *selected == 0 { 1 } else { 0 };
+                    *selected = (*selected + 1) % 3;
                 }
                 KeyCode::Enter => {
                     if *selected == 0 {
@@ -699,9 +702,12 @@ impl LoginAddAccountState {
                         });
                         self.step = AddStep::Waiting { auth_url: None };
                         self.app_event_tx.send(AppEvent::LoginStartChatGpt);
-                    } else {
+                    } else if *selected == 1 {
                         self.feedback = None;
                         self.step = AddStep::ApiKey { field: FormTextField::new_single_line() };
+                    } else {
+                        self.feedback = None;
+                        self.step = AddStep::ZaiKey { field: FormTextField::new_single_line() };
                     }
                 }
                 _ => {}
@@ -742,6 +748,42 @@ impl LoginAddAccountState {
                     let _ = field.handle_key(key_event);
                 }
             },
+            AddStep::ZaiKey { field } => match key_event.code {
+                KeyCode::Esc => {
+                    self.finish_and_show_accounts();
+                }
+                KeyCode::Enter => {
+                    let key = field.text().trim().to_string();
+                    if key.is_empty() {
+                        self.feedback = Some(Feedback {
+                            message: "Z.AI key cannot be empty".to_string(),
+                            is_error: true,
+                        });
+                    } else {
+                        match auth_accounts::upsert_zai_key_account(&self.code_home, key, None, true) {
+                            Ok(_) => {
+                                self.feedback = Some(Feedback {
+                                    message: "Z.AI connected".to_string(),
+                                    is_error: false,
+                                });
+                                self.send_tail("Added Z.AI account".to_string());
+                                self.app_event_tx
+                                    .send(AppEvent::LoginUsingChatGptChanged { using_chatgpt_auth: false });
+                                self.finish_and_show_accounts();
+                            }
+                            Err(err) => {
+                                self.feedback = Some(Feedback {
+                                    message: format!("Failed to store Z.AI key: {err}"),
+                                    is_error: true,
+                                });
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    let _ = field.handle_key(key_event);
+                }
+            },
             AddStep::Waiting { .. } => match key_event.code {
                 KeyCode::Esc => {
                     self.app_event_tx.send(AppEvent::LoginCancelChatGpt);
@@ -765,11 +807,12 @@ impl LoginAddAccountState {
     }
 
     fn handle_paste(&mut self, text: String) -> ConditionalUpdate {
-        if let AddStep::ApiKey { field } = &mut self.step {
-            let _ = field.handle_paste(text);
-            ConditionalUpdate::NeedsRedraw
-        } else {
-            ConditionalUpdate::NoRedraw
+        match &mut self.step {
+            AddStep::ApiKey { field } | AddStep::ZaiKey { field } => {
+                let _ = field.handle_paste(text);
+                ConditionalUpdate::NeedsRedraw
+            }
+            _ => ConditionalUpdate::NoRedraw,
         }
     }
 
@@ -783,7 +826,7 @@ impl LoginAddAccountState {
             AddStep::Choose { .. } => {
                 lines += 4; // options + spacing
             }
-            AddStep::ApiKey { .. } => {
+            AddStep::ApiKey { .. } | AddStep::ZaiKey { .. } => {
                 lines += 4; // instructions + input + spacing
             }
             AddStep::Waiting { auth_url } => {
@@ -834,7 +877,7 @@ impl LoginAddAccountState {
             AddStep::Choose { selected } => {
                 lines.push(Line::from("Choose how you’d like to add an account:"));
                 lines.push(Line::from(""));
-                let options = ["ChatGPT sign-in", "API key"];
+                let options = ["ChatGPT sign-in", "OpenAI API key", "Zhipu AI (Z.AI) key"];
                 for (idx, option) in options.iter().enumerate() {
                     let mut spans = Vec::new();
                     if idx == *selected {
@@ -860,6 +903,17 @@ impl LoginAddAccountState {
             }
             AddStep::ApiKey { field } => {
                 lines.push(Line::from("Paste your OpenAI API key:"));
+                lines.push(Line::from(field.render_line()));
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(crate::colors::success())),
+                    Span::styled(" Save  ", Style::default().fg(crate::colors::text_dim())),
+                    Span::styled("Esc", Style::default().fg(crate::colors::error()).add_modifier(Modifier::BOLD)),
+                    Span::styled(" Cancel", Style::default().fg(crate::colors::text_dim())),
+                ]));
+            }
+            AddStep::ZaiKey { field } => {
+                lines.push(Line::from("Paste your Zhipu AI (Z.AI) key:"));
                 lines.push(Line::from(field.render_line()));
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![

@@ -855,7 +855,18 @@ pub(crate) fn new_status_output(
                         "  • Method: ChatGPT account (account_id: {account_id})"
                     )));
                 }
+                AuthMode::ZaiKey => {
+                    let suffix =
+                        try_read_auth_json(&code_login::get_auth_file(&config.code_home))
+                            .ok()
+                            .and_then(|a| a.zai_api_key)
+                            .or_else(|| std::env::var("Z_AI_API_KEY").ok())
+                            .map(|k| key_suffix(&k))
+                            .unwrap_or_else(|| "????".to_string());
+                    lines.push(Line::from(format!("  • Method: Z.AI key (…{suffix})")));
+                }
             },
+ 
             _ => {
                 lines.push(Line::from("  • Method: unauthenticated"));
             }

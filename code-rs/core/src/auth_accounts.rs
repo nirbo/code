@@ -23,6 +23,9 @@ pub struct StoredAccount {
     pub openai_api_key: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zai_api_key: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<TokenData>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,6 +148,14 @@ fn match_api_key_account(existing: &StoredAccount, api_key: &str) -> bool {
             .is_some_and(|stored| stored == api_key)
 }
 
+fn match_zai_key_account(existing: &StoredAccount, api_key: &str) -> bool {
+    existing.mode == AuthMode::ZaiKey
+        && existing
+            .zai_api_key
+            .as_ref()
+            .is_some_and(|stored| stored == api_key)
+}
+
 fn touch_account(account: &mut StoredAccount, used: bool) {
     if account.created_at.is_none() {
         account.created_at = Some(now());
@@ -164,6 +175,10 @@ fn upsert_account(mut data: AccountsFile, mut new_account: StoredAccount) -> (Ac
             .openai_api_key
             .as_ref()
             .and_then(|api_key| data.accounts.iter().position(|acc| match_api_key_account(acc, api_key))),
+        AuthMode::ZaiKey => new_account
+            .zai_api_key
+            .as_ref()
+            .and_then(|api_key| data.accounts.iter().position(|acc| match_zai_key_account(acc, api_key))),
     };
 
     if let Some(idx) = existing_idx {
@@ -179,6 +194,9 @@ fn upsert_account(mut data: AccountsFile, mut new_account: StoredAccount) -> (Ac
         }
         if let Some(api_key) = new_account.openai_api_key {
             account.openai_api_key = Some(api_key);
+        }
+        if let Some(api_key) = new_account.zai_api_key {
+            account.zai_api_key = Some(api_key);
         }
         if let Some(last_used) = new_account.last_used_at {
             account.last_used_at = Some(last_used);
@@ -276,6 +294,7 @@ pub fn upsert_api_key_account(
         mode: AuthMode::ApiKey,
         label,
         openai_api_key: Some(api_key),
+        zai_api_key: None,
         tokens: None,
         last_refresh: None,
         created_at: None,
@@ -315,8 +334,48 @@ pub fn upsert_chatgpt_account(
         mode: AuthMode::ChatGPT,
         label,
         openai_api_key: None,
+        zai_api_key: None,
         tokens: Some(tokens),
         last_refresh: Some(last_refresh),
+        created_at: None,
+        last_used_at: None,
+    };
+
+    let (mut data, mut stored) = upsert_account(data, new_account);
+
+    if make_active {
+        data.active_account_id = Some(stored.id.clone());
+        if let Some(account) = data
+            .accounts
+            .iter_mut()
+            .find(|acc| acc.id == stored.id)
+        {
+            touch_account(account, true);
+            stored = account.clone();
+        }
+    }
+
+    write_accounts_file(&path, &data)?;
+    Ok(stored)
+}
+
+pub fn upsert_zai_key_account(
+    code_home: &Path,
+    api_key: String,
+    label: Option<String>,
+    make_active: bool,
+) -> io::Result<StoredAccount> {
+    let path = accounts_file_path(code_home);
+    let data = read_accounts_file(&path)?;
+
+    let new_account = StoredAccount {
+        id: next_id(),
+        mode: AuthMode::ZaiKey,
+        label,
+        openai_api_key: None,
+        zai_api_key: Some(api_key),
+        tokens: None,
+        last_refresh: None,
         created_at: None,
         last_used_at: None,
     };

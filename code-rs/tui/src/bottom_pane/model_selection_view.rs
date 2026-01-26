@@ -497,8 +497,10 @@ impl ModelSelectionView {
             4
         } else if model.eq_ignore_ascii_case("gpt-5.1") {
             5
-        } else {
+        } else if model.eq_ignore_ascii_case("glm-4.7") {
             6
+        } else {
+            7
         }
     }
 
@@ -515,6 +517,8 @@ impl ModelSelectionView {
             Some("Optimized for Code. Cheaper, faster, but less capable.")
         } else if model.eq_ignore_ascii_case("gpt-5.1") {
             Some("Broad world knowledge with strong general reasoning.")
+        } else if model.eq_ignore_ascii_case("glm-4.7") {
+            Some("Z.AI flagship coding model with thinking always enabled.")
         } else {
             None
         }

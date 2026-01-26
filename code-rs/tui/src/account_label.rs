@@ -22,7 +22,7 @@ pub(crate) fn account_display_label(account: &StoredAccount) -> String {
                         return trimmed.to_string();
                     }
                 }
-                AuthMode::ApiKey => {
+                AuthMode::ApiKey | AuthMode::ZaiKey => {
                     return trimmed.to_string();
                 }
             }
@@ -41,6 +41,11 @@ pub(crate) fn account_display_label(account: &StoredAccount) -> String {
             .as_ref()
             .map(|key| format!("API key (…{})", key_suffix(key)))
             .unwrap_or_else(|| "API key".to_string()),
+        AuthMode::ZaiKey => account
+            .zai_api_key
+            .as_ref()
+            .map(|key| format!("Z.AI key (…{})", key_suffix(key)))
+            .unwrap_or_else(|| "Z.AI key".to_string()),
     }
 }
 
@@ -55,5 +60,6 @@ pub(crate) fn account_mode_priority(mode: AuthMode) -> u8 {
     match mode {
         AuthMode::ChatGPT => 0,
         AuthMode::ApiKey => 1,
+        AuthMode::ZaiKey => 2,
     }
 }
