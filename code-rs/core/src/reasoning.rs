@@ -62,6 +62,8 @@ const DEFAULT_EFFORTS: &[ReasoningEffort] = &[
     ReasoningEffort::High,
 ];
 
+const GLM_4_7_EFFORTS: &[ReasoningEffort] = &[ReasoningEffort::Medium];
+
 fn reasoning_effort_rank(effort: ReasoningEffort) -> u8 {
     match effort {
         ReasoningEffort::Minimal => 0,
@@ -110,6 +112,10 @@ pub fn supported_reasoning_efforts_for_model(model: &str) -> &'static [Reasoning
 
     if lower.starts_with("codex-") {
         return CODEX_FALLBACK_EFFORTS;
+    }
+
+    if lower.starts_with("glm-4.7") {
+        return GLM_4_7_EFFORTS;
     }
 
     DEFAULT_EFFORTS

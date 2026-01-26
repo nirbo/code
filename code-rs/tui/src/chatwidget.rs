@@ -22362,6 +22362,17 @@ Have we met every part of this goal and is there no further work to do?"#
             let family = find_family_for_model(&self.config.model)
                 .unwrap_or_else(|| derive_default_model_family(&self.config.model));
             self.config.model_family = family;
+
+            if self.config.model.eq_ignore_ascii_case("glm-4.7") {
+                if !self.config.model_provider_id.eq_ignore_ascii_case("zai") {
+                    let providers = code_core::built_in_model_providers();
+                    if let Some(p) = providers.get("zai") {
+                        self.config.model_provider = p.clone();
+                        self.config.model_provider_id = "zai".to_string();
+                    }
+                }
+            }
+
             updated = true;
         }
 

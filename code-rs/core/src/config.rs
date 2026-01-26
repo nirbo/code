@@ -919,19 +919,7 @@ impl Config {
             model_providers.entry(key).or_insert(provider);
         }
 
-        let model_provider_id = model_provider
-            .or(config_profile.model_provider)
-            .or(cfg.model_provider)
-            .unwrap_or_else(|| "openai".to_string());
-        let model_provider = model_providers
-            .get(&model_provider_id)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Model provider `{model_provider_id}` not found"),
-                )
-            })?
-            .clone();
+        // model_provider_id and model_provider are determined later after model slug resolution.
 
         // Capture workspace-write details early to avoid borrow after partial moves
         let cfg_workspace = cfg.sandbox_workspace_write.clone();
@@ -1077,9 +1065,30 @@ impl Config {
         let model_explicit = model.is_some() || config_profile.model.is_some() || cfg.model.is_some();
 
         let model = model
-            .or(config_profile.model)
-            .or(cfg.model)
+            .clone()
+            .or_else(|| config_profile.model.clone())
+            .or_else(|| cfg.model.clone())
             .unwrap_or_else(|| default_model_slug.to_string());
+
+        let mut model_provider_id = model_provider
+            .clone()
+            .or(config_profile.model_provider.clone())
+            .or(cfg.model_provider.clone())
+            .unwrap_or_else(|| "openai".to_string());
+
+        if model.eq_ignore_ascii_case("glm-4.7") && model_provider.is_none() {
+            model_provider_id = "zai".to_string();
+        }
+
+        let model_provider = model_providers
+            .get(&model_provider_id)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Model provider `{model_provider_id}` not found"),
+                )
+            })?
+            .clone();
 
         let model_personality = config_profile
             .model_personality
@@ -1879,6 +1888,7 @@ args = ["-y", "@upstash/context7-mcp"]
             code_home.path(),
             None,
             "gpt-5.1-codex",
+            None,
             Some(ReasoningEffort::High),
             None,
         )
@@ -1915,6 +1925,7 @@ model = "gpt-4.1"
             code_home.path(),
             None,
             "o4-mini",
+            None,
             Some(ReasoningEffort::High),
             None,
         )
@@ -1944,6 +1955,7 @@ model = "gpt-4.1"
             code_home.path(),
             Some("dev"),
             "gpt-5.1-codex",
+            None,
             Some(ReasoningEffort::Medium),
             None,
         )
@@ -1988,6 +2000,7 @@ model = "gpt-5.1-codex"
             code_home.path(),
             Some("dev"),
             "o4-high",
+            None,
             Some(ReasoningEffort::Medium),
             None,
         )

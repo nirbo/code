@@ -138,6 +138,13 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             context_window: Some(CONTEXT_WINDOW_200K),
             max_output_tokens: Some(100_000),
         )
+    } else if slug.starts_with("glm-4.7") {
+        model_family!(
+            slug,
+            "glm-4.7",
+            context_window: Some(CONTEXT_WINDOW_200K),
+            max_output_tokens: Some(128_000),
+        )
     } else if slug.starts_with("o4-mini") {
         model_family!(
             slug, "o4-mini",
@@ -278,6 +285,14 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             context_window: Some(CONTEXT_WINDOW_272K),
             max_output_tokens: Some(MAX_OUTPUT_DEFAULT),
             truncation_policy: TruncationPolicy::Bytes(10_000),
+        )
+    } else if slug.starts_with("glm-4.7") {
+        model_family!(
+            slug, "glm-4.7",
+            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            default_reasoning_effort: Some(ReasoningEffort::Medium),
+            context_window: Some(CONTEXT_WINDOW_200K),
+            max_output_tokens: Some(MAX_OUTPUT_DEFAULT),
         )
     } else if slug.starts_with("gpt-5.1") {
         model_family!(

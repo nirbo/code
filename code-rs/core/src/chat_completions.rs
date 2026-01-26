@@ -169,6 +169,13 @@ pub(crate) async fn stream_chat_completions(
     for (idx, item) in input.iter().enumerate() {
         match item {
             ResponseItem::Message { role, content, .. } => {
+                let effective_role = if model_slug.eq_ignore_ascii_case("glm-4.7")
+                    && role.eq_ignore_ascii_case("developer")
+                {
+                    "system"
+                } else {
+                    role.as_str()
+                };
                 // If the message contains any images, we must use the
                 // multi-modal array form supported by Chat Completions:
                 //   [{ type: "text", text: "..." }, { type: "image_url", image_url: { url: "data:..." } }]
@@ -191,11 +198,11 @@ pub(crate) async fn stream_chat_completions(
                             }
                         }
                     }
-                    messages.push(json!({"role": role, "content": parts}));
+                    messages.push(json!({"role": effective_role, "content": parts}));
                 } else {
                     // Text-only messages can be sent as a single string for
                     // maximal compatibility with providers that only accept
-                    // plain text in Chat Completions.
+                    // messages as a string.
                     let mut text = String::new();
                     for c in content {
                         match c {
@@ -206,7 +213,7 @@ pub(crate) async fn stream_chat_completions(
                             _ => {}
                         }
                     }
-                    messages.push(json!({"role": role, "content": text}));
+                    messages.push(json!({"role": effective_role, "content": text}));
                 }
             }
             ResponseItem::CompactionSummary { .. } => {
@@ -310,6 +317,13 @@ pub(crate) async fn stream_chat_completions(
             for (key, value) in &openrouter_cfg.extra {
                 obj.entry(key.clone()).or_insert(value.clone());
             }
+        }
+    }
+
+    if model_slug.eq_ignore_ascii_case("glm-4.7") {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("temperature".to_string(), json!(1.0));
+            obj.insert("thinking".to_string(), json!({ "type": "enabled" }));
         }
     }
 
@@ -740,7 +754,10 @@ async fn process_chat_sse<S>(
             // Forward any reasoning/thinking deltas if present.
             // Some providers stream `reasoning` as a plain string while others
             // nest the text under an object (e.g. `{ "reasoning": { "text": "…" } }`).
-            if let Some(reasoning_val) = choice.get("delta").and_then(|d| d.get("reasoning")) {
+            if let Some(reasoning_val) = choice
+                .get("delta")
+                .and_then(|d| d.get("reasoning").or_else(|| d.get("thought")).or_else(|| d.get("thinking")))
+            {
                 let mut maybe_text = reasoning_val
                     .as_str()
                     .map(str::to_string)

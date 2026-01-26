@@ -1601,6 +1601,17 @@ fn apply_model_selection(config: &mut Config, model: &str, effort: ReasoningEffo
         config.model = model.to_string();
         config.model_family = find_family_for_model(&config.model)
             .unwrap_or_else(|| derive_default_model_family(&config.model));
+
+        if config.model.eq_ignore_ascii_case("glm-4.7") {
+            if !config.model_provider_id.eq_ignore_ascii_case("zai") {
+                let providers = code_core::built_in_model_providers();
+                if let Some(p) = providers.get("zai") {
+                    config.model_provider = p.clone();
+                    config.model_provider_id = "zai".to_string();
+                }
+            }
+        }
+
         updated = true;
     }
 

@@ -145,6 +145,7 @@ pub async fn persist_model_selection(
     code_home: &Path,
     profile: Option<&str>,
     model: &str,
+    model_provider_id: Option<&str>,
     effort: Option<ReasoningEffort>,
     preferred_effort: Option<ReasoningEffort>,
 ) -> anyhow::Result<()> {
@@ -195,6 +196,10 @@ pub async fn persist_model_selection(
 
             profile_table["model"] = toml_edit::value(model.to_string());
 
+            if let Some(provider_id) = model_provider_id {
+                profile_table["model_provider"] = toml_edit::value(provider_id.to_string());
+            }
+
             if let Some(effort) = effort {
                 profile_table["model_reasoning_effort"] =
                     toml_edit::value(effort.to_string());
@@ -210,6 +215,9 @@ pub async fn persist_model_selection(
             }
         } else {
             root["model"] = toml_edit::value(model.to_string());
+            if let Some(provider_id) = model_provider_id {
+                root["model_provider"] = toml_edit::value(provider_id.to_string());
+            }
             match effort {
                 Some(effort) => {
                     root["model_reasoning_effort"] =
