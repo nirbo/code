@@ -269,7 +269,7 @@ const AGENT_MODEL_SPECS: &[AgentModelSpec] = &[
         read_only_args: GLM_4_7_READ_ONLY,
         write_args: GLM_4_7_WRITE,
         model_args: &["--model", "glm-4.7"],
-        description: "Reasoning model from Z.AI; strong alternative for complex planning and cross-checking.",
+        description: "Reasoning model from Z.AI; strong alternative for complex planning and cross-checking. Good for long-horizon reasoning and debugging.",
         enabled_by_default: true,
         aliases: &["glm47", "glm4.7", "glm-4-7"],
         gating_env: None,
