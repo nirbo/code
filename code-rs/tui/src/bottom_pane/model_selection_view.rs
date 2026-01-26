@@ -12,6 +12,7 @@ use ratatui::prelude::Widget;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use std::cell::Cell;
 use std::cmp::Ordering;
 
 /// Flattened preset entry combining a model with a specific reasoning effort.
@@ -122,6 +123,7 @@ impl ModelSelectionTarget {
 pub(crate) struct ModelSelectionView {
     flat_presets: Vec<FlatPreset>,
     selected_index: usize,
+    scroll_offset: Cell<u16>,
     current_model: String,
     current_effort: ReasoningEffort,
     use_chat_model: bool,
@@ -160,6 +162,7 @@ impl ModelSelectionView {
         Self {
             flat_presets,
             selected_index: initial_index,
+            scroll_offset: Cell::new(0),
             current_model,
             current_effort,
             use_chat_model,
@@ -763,6 +766,7 @@ impl ModelSelectionView {
 
         Paragraph::new(lines)
             .alignment(Alignment::Left)
+            .scroll((self.scroll_offset.get(), 0))
             .style(
                 Style::default()
                     .bg(crate::colors::background())
@@ -773,6 +777,61 @@ impl ModelSelectionView {
 
     pub(crate) fn render_without_frame(&self, area: Rect, buf: &mut Buffer) {
         self.render_panel_body(area, buf);
+    }
+
+    fn scroll_into_view(&self, height: u16) {
+        if height == 0 {
+            return;
+        }
+        let line_indexes = self.entry_line_indexes();
+        if let Some(&selected_line) = line_indexes.get(self.selected_index) {
+            let selected_line = selected_line as u16;
+            let top_margin = 3;
+            let bottom_margin = 2; // Allow for footer and spacer
+
+            let current_scroll = self.scroll_offset.get();
+            if selected_line < current_scroll + top_margin {
+                self.scroll_offset.set(selected_line.saturating_sub(top_margin));
+            } else if selected_line >= current_scroll + height.saturating_sub(bottom_margin) {
+                self.scroll_offset.set(
+                    selected_line
+                        .saturating_add(1)
+                        .saturating_sub(height)
+                        .saturating_add(bottom_margin),
+                );
+            }
+        }
+    }
+
+    fn entry_line_indexes(&self) -> Vec<usize> {
+        let mut indexes = Vec::new();
+        let mut current_line: usize = 3; // header info
+        if self.target.supports_follow_chat() {
+            indexes.push(current_line + 3); // "Use chat model" line
+            current_line += 5; // header + desc + entry + spacer
+        }
+
+        let mut previous_model: Option<&str> = None;
+        for idx in self.sorted_indices() {
+            let flat_preset = &self.flat_presets[idx];
+            let is_new_model = previous_model
+                .map(|prev| !prev.eq_ignore_ascii_case(&flat_preset.model))
+                .unwrap_or(true);
+
+            if is_new_model {
+                if previous_model.is_some() {
+                    current_line += 1;
+                }
+                current_line += 1;
+                if Self::model_description(&flat_preset.model).is_some() {
+                    current_line += 1;
+                }
+                previous_model = Some(&flat_preset.model);
+            }
+            indexes.push(current_line);
+            current_line += 1;
+        }
+        indexes
     }
 }
 
@@ -792,6 +851,7 @@ impl<'a> BottomPaneView<'a> for ModelSelectionView {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.scroll_into_view(area.height);
         render_panel(
             area,
             buf,

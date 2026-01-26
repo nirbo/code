@@ -12,6 +12,7 @@ const GPT_5_CODEX_INSTRUCTIONS: &str = include_str!("../gpt_5_codex_prompt.md");
 const GPT_5_1_INSTRUCTIONS: &str = include_str!("../gpt_5_1_prompt.md");
 const GPT_5_2_INSTRUCTIONS: &str = include_str!("../gpt_5_2_prompt.md");
 const GPT_5_1_CODEX_MAX_INSTRUCTIONS: &str = include_str!("../gpt-5.1-codex-max_prompt.md");
+const GLM_4_7_INSTRUCTIONS: &str = include_str!("../glm_4_7_prompt.md");
 const GPT_5_2_CODEX_INSTRUCTIONS: &str = include_str!("../gpt-5.2-codex_prompt.md");
 
 const GPT_5_2_CODEX_INSTRUCTIONS_TEMPLATE: &str = include_str!(
@@ -140,9 +141,8 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
         )
     } else if slug.starts_with("glm-4.7") {
         model_family!(
-            slug,
-            "glm-4.7",
-            context_window: Some(CONTEXT_WINDOW_200K),
+            slug, "glm-4.7",
+            context_window: Some(CONTEXT_WINDOW_128K),
             max_output_tokens: Some(128_000),
         )
     } else if slug.starts_with("o4-mini") {
@@ -289,9 +289,10 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
     } else if slug.starts_with("glm-4.7") {
         model_family!(
             slug, "glm-4.7",
+            base_instructions: GLM_4_7_INSTRUCTIONS.to_string(),
             apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
             default_reasoning_effort: Some(ReasoningEffort::Medium),
-            context_window: Some(CONTEXT_WINDOW_200K),
+            context_window: Some(CONTEXT_WINDOW_128K),
             max_output_tokens: Some(MAX_OUTPUT_DEFAULT),
         )
     } else if slug.starts_with("gpt-5.1") {
