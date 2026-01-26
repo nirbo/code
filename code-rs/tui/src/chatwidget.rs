@@ -23903,7 +23903,7 @@ Have we met every part of this goal and is there no further work to do?"#
 
     fn is_builtin_agent(name: &str, command: &str) -> bool {
         if let Some(spec) = agent_model_spec(name).or_else(|| agent_model_spec(command)) {
-            return matches!(spec.family, "code" | "codex" | "cloud");
+            return matches!(spec.family, "code" | "codex" | "cloud" | "zai");
         }
 
         name.eq_ignore_ascii_case("code")
