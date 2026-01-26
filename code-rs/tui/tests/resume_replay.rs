@@ -1,15 +1,32 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use code_core::history::{
-    ExploreEntry, ExploreEntryStatus, ExploreRecord, ExploreSummary, HistoryId, HistoryRecord,
-    HistorySnapshot, InlineSpan, OrderKeySnapshot, PlanIcon, PlanProgress, PlanStep, PlanUpdateState,
-    ReasoningBlock, ReasoningSection, ReasoningState, TextEmphasis, TextTone,
-};
+use code_core::history::ExploreEntry;
+use code_core::history::ExploreEntryStatus;
+use code_core::history::ExploreRecord;
+use code_core::history::ExploreSummary;
+use code_core::history::HistoryId;
+use code_core::history::HistoryRecord;
+use code_core::history::HistorySnapshot;
+use code_core::history::InlineSpan;
+use code_core::history::OrderKeySnapshot;
+use code_core::history::PlanIcon;
+use code_core::history::PlanProgress;
+use code_core::history::PlanStep;
+use code_core::history::PlanUpdateState;
+use code_core::history::ReasoningBlock;
+use code_core::history::ReasoningSection;
+use code_core::history::ReasoningState;
+use code_core::history::TextEmphasis;
+use code_core::history::TextTone;
 use code_core::plan_tool::StepStatus;
-use code_core::protocol::{Event, EventMsg, ReplayHistoryEvent};
-use code_protocol::models::{ContentItem, ResponseItem};
-use code_tui::test_helpers::{render_chat_widget_to_vt100, ChatWidgetHarness};
+use code_core::protocol::Event;
+use code_core::protocol::EventMsg;
+use code_core::protocol::ReplayHistoryEvent;
+use code_protocol::models::ContentItem;
+use code_protocol::models::ResponseItem;
+use code_tui::test_helpers::ChatWidgetHarness;
+use code_tui::test_helpers::render_chat_widget_to_vt100;
 use serde_json::to_value;
 
 fn assistant_cell_count(screen: &str) -> usize {
@@ -26,8 +43,12 @@ fn assistant_cell_count(screen: &str) -> usize {
 
 fn message(role: &str, text: &str) -> ResponseItem {
     let content = match role {
-        "assistant" => ContentItem::OutputText { text: text.to_string() },
-        _ => ContentItem::InputText { text: text.to_string() },
+        "assistant" => ContentItem::OutputText {
+            text: text.to_string(),
+        },
+        _ => ContentItem::InputText {
+            text: text.to_string(),
+        },
     };
 
     ResponseItem::Message {
@@ -107,17 +128,36 @@ fn interleaved_reasoning_snapshot() -> HistorySnapshot {
         tool_call_lookup: Default::default(),
         stream_lookup: Default::default(),
         order: vec![
-            OrderKeySnapshot { req: 1, out: 0, seq: 1 },
-            OrderKeySnapshot { req: 2, out: 0, seq: 2 },
-            OrderKeySnapshot { req: 3, out: 0, seq: 3 },
-            OrderKeySnapshot { req: 4, out: 0, seq: 4 },
+            OrderKeySnapshot {
+                req: 1,
+                out: 0,
+                seq: 1,
+            },
+            OrderKeySnapshot {
+                req: 2,
+                out: 0,
+                seq: 2,
+            },
+            OrderKeySnapshot {
+                req: 3,
+                out: 0,
+                seq: 3,
+            },
+            OrderKeySnapshot {
+                req: 4,
+                out: 0,
+                seq: 4,
+            },
         ],
         order_debug: Vec::new(),
     }
 }
 
 fn final_reasoning_snapshot() -> HistorySnapshot {
-    let records = vec![explore_record(1), reasoning_state(2, "Summarizing findings")];
+    let records = vec![
+        explore_record(1),
+        reasoning_state(2, "Summarizing findings"),
+    ];
 
     HistorySnapshot {
         records,
@@ -126,8 +166,16 @@ fn final_reasoning_snapshot() -> HistorySnapshot {
         tool_call_lookup: Default::default(),
         stream_lookup: Default::default(),
         order: vec![
-            OrderKeySnapshot { req: 1, out: 0, seq: 1 },
-            OrderKeySnapshot { req: 2, out: 0, seq: 2 },
+            OrderKeySnapshot {
+                req: 1,
+                out: 0,
+                seq: 1,
+            },
+            OrderKeySnapshot {
+                req: 2,
+                out: 0,
+                seq: 2,
+            },
         ],
         order_debug: Vec::new(),
     }
@@ -216,10 +264,7 @@ fn replay_history_hides_interleaved_reasoning_after_exploring() {
         !screen.contains("Inspecting directory structure"),
         "screen: {screen}"
     );
-    assert!(
-        screen.contains("Summarizing findings"),
-        "screen: {screen}"
-    );
+    assert!(screen.contains("Summarizing findings"), "screen: {screen}");
 }
 
 #[test]

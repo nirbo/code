@@ -1,4 +1,5 @@
-use code_core::{built_in_model_providers, WireApi};
+use code_core::WireApi;
+use code_core::built_in_model_providers;
 use serial_test::serial;
 
 fn with_env_override<F, R>(key: &str, value: Option<&str>, f: F) -> R

@@ -8,7 +8,8 @@ use std::time::Instant;
 use code_core::protocol::Op;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Style, Stylize};
+use ratatui::style::Style;
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
@@ -153,8 +154,13 @@ impl WidgetRef for StatusIndicatorWidget {
         spans.extend(vec![
             ratatui::text::Span::raw(" "),
             // (12s • Esc to interrupt)
-            ratatui::text::Span::raw(format!("({elapsed}s • ")).style(Style::default().fg(text_dim)),
-            ratatui::text::Span::raw("Esc").style(Style::default().fg(accent).add_modifier(ratatui::style::Modifier::BOLD)),
+            ratatui::text::Span::raw(format!("({elapsed}s • "))
+                .style(Style::default().fg(text_dim)),
+            ratatui::text::Span::raw("Esc").style(
+                Style::default()
+                    .fg(accent)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             ratatui::text::Span::raw(")").style(Style::default().fg(text_dim)),
         ]);
 
@@ -197,4 +203,3 @@ impl WidgetRef for StatusIndicatorWidget {
         paragraph.render_ref(area, buf);
     }
 }
-

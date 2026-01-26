@@ -1,11 +1,22 @@
 use std::collections::HashMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use ratatui::layout::Alignment;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::text::Span;
+use ratatui::widgets::Block;
+use ratatui::widgets::Borders;
+use ratatui::widgets::Clear;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
+use ratatui::widgets::Wrap;
 
 use code_protocol::request_user_input::RequestUserInputAnswer;
 use code_protocol::request_user_input::RequestUserInputQuestion;
@@ -14,11 +25,12 @@ use code_protocol::request_user_input::RequestUserInputResponse;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 
+use super::BottomPane;
+use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows;
-use super::{BottomPane, CancellationEvent};
 
 #[derive(Debug, Clone)]
 struct AnswerState {
@@ -46,8 +58,7 @@ impl RequestUserInputView {
             .iter()
             .map(|q| {
                 let mut option_state = ScrollState::new();
-                if q
-                    .options
+                if q.options
                     .as_ref()
                     .is_some_and(|options| !options.is_empty())
                 {
@@ -310,7 +321,11 @@ impl BottomPaneView<'_> for RequestUserInputView {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(crate::colors::border()))
-            .style(Style::default().bg(crate::colors::background()).fg(crate::colors::text()))
+            .style(
+                Style::default()
+                    .bg(crate::colors::background())
+                    .fg(crate::colors::text()),
+            )
             .title("User input")
             .title_alignment(Alignment::Center);
         let inner = block.inner(area);
@@ -319,11 +334,7 @@ impl BottomPaneView<'_> for RequestUserInputView {
         let question_count = self.question_count();
         let (header, prompt, options) = self
             .current_question()
-            .map(|q| (
-                q.header.as_str(),
-                q.question.as_str(),
-                q.options.as_ref(),
-            ))
+            .map(|q| (q.header.as_str(), q.question.as_str(), q.options.as_ref()))
             .unwrap_or(("No questions", "", None));
 
         let mut y = inner.y;
@@ -445,9 +456,7 @@ impl BottomPaneView<'_> for RequestUserInputView {
         let is_last = question_count > 0 && self.current_idx + 1 >= question_count;
         let enter_label = if is_last { "submit" } else { "next" };
         let footer = if has_options {
-            format!(
-                "↑/↓ select | Enter {enter_label} | Esc type in composer | PgUp/PgDn prev/next"
-            )
+            format!("↑/↓ select | Enter {enter_label} | Esc type in composer | PgUp/PgDn prev/next")
         } else {
             format!(
                 "Type answer | Enter {enter_label} | Esc type in composer | PgUp/PgDn prev/next"

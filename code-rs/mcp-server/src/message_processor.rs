@@ -1,39 +1,46 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use code_app_server::code_message_processor::CodexMessageProcessor;
-use crate::code_tool_config::create_tool_for_acp_new_session;
-use crate::code_tool_config::create_tool_for_acp_prompt;
-use crate::code_tool_config::create_tool_for_acp_set_model;
-use crate::code_tool_config::create_tool_for_code_tool_call_param;
-use crate::code_tool_config::create_tool_for_code_tool_call_reply_param;
 use crate::code_tool_config::AcpNewSessionToolArgs;
 use crate::code_tool_config::AcpPromptToolArgs;
 use crate::code_tool_config::AcpSetModelToolArgs;
 use crate::code_tool_config::CodexToolCallParam;
 use crate::code_tool_config::CodexToolCallReplyParam;
-use crate::error_code::INVALID_REQUEST_ERROR_CODE;
+use crate::code_tool_config::create_tool_for_acp_new_session;
+use crate::code_tool_config::create_tool_for_acp_prompt;
+use crate::code_tool_config::create_tool_for_acp_set_model;
+use crate::code_tool_config::create_tool_for_code_tool_call_param;
+use crate::code_tool_config::create_tool_for_code_tool_call_reply_param;
 use crate::error_code::INTERNAL_ERROR_CODE;
-use crate::outgoing_message::{OutgoingMessageSender, OutgoingNotification};
+use crate::error_code::INVALID_REQUEST_ERROR_CODE;
+use crate::outgoing_message::OutgoingMessageSender;
+use crate::outgoing_message::OutgoingNotification;
 use crate::session_store::SessionMap;
 use agent_client_protocol as acp;
-use anyhow::anyhow;
 use anyhow::Context as _;
+use anyhow::anyhow;
+use code_app_server::code_message_processor::CodexMessageProcessor;
 use code_app_server_protocol::ClientRequest;
 use code_protocol::ConversationId;
 use code_protocol::protocol::SessionSource;
 
-use code_common::model_presets::{builtin_model_presets, clamp_reasoning_effort_for_model, ModelPreset};
+use code_app_server_protocol::AuthMode;
+use code_common::model_presets::ModelPreset;
+use code_common::model_presets::builtin_model_presets;
+use code_common::model_presets::clamp_reasoning_effort_for_model;
 use code_core::AuthManager;
 use code_core::ConversationManager;
-use code_core::config_types::{ClientTools, McpServerConfig, McpServerTransportConfig, ReasoningEffort};
 use code_core::config::Config;
+use code_core::config_types::ClientTools;
+use code_core::config_types::McpServerConfig;
+use code_core::config_types::McpServerTransportConfig;
+use code_core::config_types::ReasoningEffort;
 use code_core::default_client::USER_AGENT_SUFFIX;
 use code_core::default_client::get_code_user_agent_default;
-use code_core::model_family::{derive_default_model_family, find_family_for_model};
-use code_core::protocol::Submission;
+use code_core::model_family::derive_default_model_family;
+use code_core::model_family::find_family_for_model;
 use code_core::protocol::Op;
-use code_app_server_protocol::AuthMode;
+use code_core::protocol::Submission;
 use mcp_types::CallToolRequestParams;
 use mcp_types::CallToolResult;
 use mcp_types::ClientRequest as McpClientRequest;
@@ -125,8 +132,7 @@ impl MessageProcessor {
             if let Some(params) = request.params.clone() {
                 match serde_json::from_value::<AcpNewSessionToolArgs>(params) {
                     Ok(session_params) => {
-                        self.handle_session_new(request_id, session_params)
-                            .await;
+                        self.handle_session_new(request_id, session_params).await;
                     }
                     Err(err) => {
                         tracing::warn!("Failed to parse session/new params: {err}");
@@ -154,8 +160,7 @@ impl MessageProcessor {
             if let Some(params) = request.params.clone() {
                 match serde_json::from_value::<AcpPromptToolArgs>(params) {
                     Ok(prompt_params) => {
-                        self.handle_session_prompt(request_id, prompt_params)
-                            .await;
+                        self.handle_session_prompt(request_id, prompt_params).await;
                     }
                     Err(err) => {
                         tracing::warn!("Failed to parse session/prompt params: {err}");
@@ -714,8 +719,7 @@ impl MessageProcessor {
         tokio::spawn(async move {
             let codex = {
                 let map = session_map.lock().await;
-                map.get(&session_id)
-                    .map(|entry| entry.conversation.clone())
+                map.get(&session_id).map(|entry| entry.conversation.clone())
             };
 
             let Some(codex) = codex else {
@@ -901,21 +905,14 @@ impl MessageProcessor {
         });
     }
 
-    fn acp_new_session_cfg(
-        &self,
-        arguments: Option<serde_json::Value>,
-    ) -> anyhow::Result<Config> {
+    fn acp_new_session_cfg(&self, arguments: Option<serde_json::Value>) -> anyhow::Result<Config> {
         let arguments = arguments.context("Arguments required")?;
         let arguments = serde_json::from_value::<AcpNewSessionToolArgs>(arguments)?;
         let request = serde_json::from_value::<acp::NewSessionRequest>(arguments.request)?;
         self.build_new_session_config(request, arguments.client_tools)
     }
 
-    async fn handle_session_new(
-        &self,
-        request_id: RequestId,
-        params: AcpNewSessionToolArgs,
-    ) {
+    async fn handle_session_new(&self, request_id: RequestId, params: AcpNewSessionToolArgs) {
         let config = match self.session_new_config(params) {
             Ok(cfg) => cfg,
             Err(err) => {
@@ -973,8 +970,8 @@ impl MessageProcessor {
         override_tools: Option<ClientTools>,
     ) -> anyhow::Result<Config> {
         let mcp_servers = convert_mcp_servers(request.mcp_servers)?;
-        let client_tools = override_tools
-            .or_else(|| self.base_config.experimental_client_tools.clone());
+        let client_tools =
+            override_tools.or_else(|| self.base_config.experimental_client_tools.clone());
 
         let overrides = code_core::config::ConfigOverrides {
             cwd: Some(request.cwd),
@@ -985,14 +982,13 @@ impl MessageProcessor {
             ..Default::default()
         };
 
-        Ok(Config::load_with_cli_overrides(Default::default(), overrides)?)
+        Ok(Config::load_with_cli_overrides(
+            Default::default(),
+            overrides,
+        )?)
     }
 
-    async fn handle_session_prompt(
-        &self,
-        request_id: RequestId,
-        params: AcpPromptToolArgs,
-    ) {
+    async fn handle_session_prompt(&self, request_id: RequestId, params: AcpPromptToolArgs) {
         let acp_session_id = params.session_id;
         let session_uuid = match Uuid::parse_str(&acp_session_id.to_string()) {
             Ok(id) => id,
@@ -1205,8 +1201,7 @@ impl MessageProcessor {
 
         let session = {
             let map = self.session_map.lock().await;
-            map.get(&session_id)
-                .map(|entry| entry.conversation.clone())
+            map.get(&session_id).map(|entry| entry.conversation.clone())
         };
 
         let Some(session) = session else {
@@ -1233,7 +1228,9 @@ impl MessageProcessor {
                 .await
                 .insert(request_id.clone(), session_id);
 
-            let result = crate::acp_tool_runner::prompt(acp_session_id, session, prompt, outgoing.clone()).await;
+            let result =
+                crate::acp_tool_runner::prompt(acp_session_id, session, prompt, outgoing.clone())
+                    .await;
 
             let result = match result {
                 Ok(stop_reason) => {
@@ -1271,10 +1268,9 @@ impl MessageProcessor {
         request_id: RequestId,
         arguments: Option<serde_json::Value>,
     ) {
-        let args = match arguments
-            .context("arguments required")
-            .and_then(|args| serde_json::from_value::<AcpSetModelToolArgs>(args).context("invalid arguments"))
-        {
+        let args = match arguments.context("arguments required").and_then(|args| {
+            serde_json::from_value::<AcpSetModelToolArgs>(args).context("invalid arguments")
+        }) {
             Ok(args) => args,
             Err(err) => {
                 tracing::warn!("Failed to parse arguments: {err}");
@@ -1333,9 +1329,7 @@ impl MessageProcessor {
                     is_error: Some(true),
                     structured_content: None,
                 };
-                self.outgoing
-                    .send_response(request_id, result)
-                    .await;
+                self.outgoing.send_response(request_id, result).await;
             }
         }
     }
@@ -1387,10 +1381,12 @@ impl MessageProcessor {
         let request_ids: Vec<RequestId> = {
             let map = self.running_requests_id_to_code_uuid.lock().await;
             map.iter()
-                .filter_map(|(request_id, uuid)| if *uuid == session_uuid {
-                    Some(request_id.clone())
-                } else {
-                    None
+                .filter_map(|(request_id, uuid)| {
+                    if *uuid == session_uuid {
+                        Some(request_id.clone())
+                    } else {
+                        None
+                    }
                 })
                 .collect()
         };
@@ -1429,7 +1425,7 @@ impl MessageProcessor {
         tracing::info!("notifications/tools/list_changed -> params: {:?}", params);
     }
 
-fn handle_logging_message(
+    fn handle_logging_message(
         &self,
         params: <mcp_types::LoggingMessageNotification as mcp_types::ModelContextProtocolNotification>::Params,
     ) {
@@ -1443,12 +1439,19 @@ fn convert_mcp_servers(
     let mut map = HashMap::with_capacity(servers.len());
     for server in servers {
         match server {
-            acp::McpServer::Stdio { name, command, args, env } => {
-                let env_map: HashMap<String, String> = env
-                    .into_iter()
-                    .map(|var| (var.name, var.value))
-                    .collect();
-                let env_map = if env_map.is_empty() { None } else { Some(env_map) };
+            acp::McpServer::Stdio {
+                name,
+                command,
+                args,
+                env,
+            } => {
+                let env_map: HashMap<String, String> =
+                    env.into_iter().map(|var| (var.name, var.value)).collect();
+                let env_map = if env_map.is_empty() {
+                    None
+                } else {
+                    Some(env_map)
+                };
 
                 map.insert(
                     name,

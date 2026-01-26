@@ -5,18 +5,20 @@
 
 mod common;
 
-use common::{
-    load_default_config_for_test,
-    load_sse_fixture_with_id,
-    mount_sse_once,
-    skip_if_no_network,
-    wait_for_event,
-};
+use common::load_default_config_for_test;
+use common::load_sse_fixture_with_id;
+use common::mount_sse_once;
+use common::skip_if_no_network;
+use common::wait_for_event;
 
+use code_core::CodexAuth;
+use code_core::ConversationManager;
+use code_core::ModelProviderInfo;
 use code_core::built_in_model_providers;
 use code_core::model_family::find_family_for_model;
-use code_core::protocol::{EventMsg, InputItem, Op};
-use code_core::{CodexAuth, ConversationManager, ModelProviderInfo};
+use code_core::protocol::EventMsg;
+use code_core::protocol::InputItem;
+use code_core::protocol::Op;
 use serde_json::Value;
 use tempfile::TempDir;
 use wiremock::MockServer;

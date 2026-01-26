@@ -14,17 +14,17 @@ use crate::ConversationId;
 use crate::config_types::ReasoningEffort as ReasoningEffortConfig;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::custom_prompts::CustomPrompt;
-use crate::skills::Skill;
 use crate::message_history::HistoryEntry;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
 use crate::num_format::format_with_separators;
 use crate::parse_command::ParsedCommand;
 use crate::plan_tool::UpdatePlanArgs;
+pub use crate::request_user_input::RequestUserInputEvent;
 use crate::request_user_input::RequestUserInputResponse;
+use crate::skills::Skill;
 use mcp_types::CallToolResult;
 use mcp_types::Tool as McpTool;
-pub use crate::request_user_input::RequestUserInputEvent;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -188,9 +188,7 @@ pub enum Op {
     },
 
     /// Persist the full chat history snapshot for the current session.
-    PersistHistorySnapshot {
-        snapshot: serde_json::Value,
-    },
+    PersistHistorySnapshot { snapshot: serde_json::Value },
 
     /// Request a single history entry identified by `log_id` + `offset`.
     GetHistoryEntryRequest { offset: usize, log_id: u64 },
@@ -302,7 +300,9 @@ pub enum SandboxPolicy {
     },
 }
 
-const fn default_true_bool() -> bool { true }
+const fn default_true_bool() -> bool {
+    true
+}
 
 /// A writable root path accompanied by a list of subpaths that should remain
 /// read‑only even when the root is writable. This is primarily used to ensure

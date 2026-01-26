@@ -18,10 +18,11 @@ use std::time::Duration;
 
 use code_app_server_protocol::AuthMode;
 
-use crate::token_data::TokenData;
-use crate::token_data::{parse_id_token, PlanType};
-use crate::token_data::KnownPlan;
 use crate::config::resolve_code_path_for_read;
+use crate::token_data::KnownPlan;
+use crate::token_data::PlanType;
+use crate::token_data::TokenData;
+use crate::token_data::parse_id_token;
 use crate::util::backoff;
 
 #[derive(Debug, Clone)]
@@ -96,7 +97,7 @@ impl CodexAuth {
             attempt = attempt.saturating_add(1);
             match try_refresh_token(refresh_token.clone(), &self.client).await {
                 Ok(refresh_response) => {
-                    return self.persist_refresh_response(refresh_response).await
+                    return self.persist_refresh_response(refresh_response).await;
                 }
                 Err(err) => {
                     if err.is_refresh_token_reused() {
@@ -191,10 +192,10 @@ impl CodexAuth {
                         try_refresh_token(tokens.refresh_token.clone(), &self.client),
                     )
                     .await
-        .map_err(|_| {
-            std::io::Error::other("timed out while refreshing OpenAI API key")
-        })?
-        .map_err(|err| std::io::Error::other(err))?;
+                    .map_err(|_| {
+                        std::io::Error::other("timed out while refreshing OpenAI API key")
+                    })?
+                    .map_err(|err| std::io::Error::other(err))?;
 
                     let updated_auth_dot_json = update_tokens(
                         &self.auth_file,
@@ -226,7 +227,7 @@ impl CodexAuth {
         match self.mode {
             AuthMode::ApiKey | AuthMode::ZaiKey => Ok(self.api_key.clone().unwrap_or_default()),
             AuthMode::ChatGPT => {
-               let id_token = self.get_token_data().await?.access_token;
+                let id_token = self.get_token_data().await?.access_token;
                 Ok(id_token)
             }
         }
@@ -341,9 +342,7 @@ fn read_openai_api_key_from_env() -> Option<String> {
 }
 
 fn read_zai_api_key_from_env() -> Option<String> {
-    env::var("Z_AI_API_KEY")
-        .ok()
-        .filter(|s| !s.is_empty())
+    env::var("Z_AI_API_KEY").ok().filter(|s| !s.is_empty())
 }
 
 pub fn read_code_api_key_from_env() -> Option<String> {
@@ -375,18 +374,14 @@ pub fn logout(code_home: &Path) -> std::io::Result<bool> {
 pub fn login_with_api_key(code_home: &Path, api_key: &str) -> std::io::Result<()> {
     let auth_dot_json = AuthDotJson {
         openai_api_key: Some(api_key.to_string()),
-            zai_api_key: None,
+        zai_api_key: None,
         tokens: None,
         last_refresh: None,
     };
- 
+
     write_auth_json(&get_auth_file(code_home), &auth_dot_json)?;
-    let _ = crate::auth_accounts::upsert_api_key_account(
-        code_home,
-        api_key.to_string(),
-        None,
-        true,
-    )?;
+    let _ =
+        crate::auth_accounts::upsert_api_key_account(code_home, api_key.to_string(), None, true)?;
     Ok(())
 }
 
@@ -422,9 +417,7 @@ pub async fn auth_for_stored_account(
                     try_refresh_token(tokens.refresh_token.clone(), &client),
                 )
                 .await
-                .map_err(|_| {
-                    std::io::Error::other("timed out while refreshing OpenAI API key")
-                })?;
+                .map_err(|_| std::io::Error::other("timed out while refreshing OpenAI API key"))?;
 
                 let refresh_response = match refresh_response {
                     Ok(response) => response,
@@ -479,7 +472,6 @@ pub async fn auth_for_stored_account(
             ))
         }
     }
- 
 }
 
 /// Activate a stored account by writing its credentials to auth.json and
@@ -531,7 +523,6 @@ pub fn activate_account(code_home: &Path, account_id: &str) -> std::io::Result<(
             write_auth_json(&auth_file, &auth)?;
         }
     }
- 
 
     let _ = crate::auth_accounts::set_active_account_id(code_home, Some(account_id_owned))?;
     Ok(())
@@ -615,7 +606,6 @@ fn load_auth(
             return Ok(Some(CodexAuth::from_zai_key_with_client(api_key, client)));
         }
     }
- 
 
     // For the AuthMode::ChatGPT variant, perhaps neither api_key nor
     // openai_api_key should exist?
@@ -679,9 +669,7 @@ async fn update_tokens(
 
     if let Some(code_home) = auth_file.parent() {
         if let Some(tokens) = auth_dot_json.tokens.clone() {
-            let last_refresh = auth_dot_json
-                .last_refresh
-                .unwrap_or_else(Utc::now);
+            let last_refresh = auth_dot_json.last_refresh.unwrap_or_else(Utc::now);
             let email = tokens.id_token.email.clone();
             let _ = crate::auth_accounts::upsert_chatgpt_account(
                 code_home,
@@ -770,24 +758,18 @@ fn classify_refresh_failure(status: StatusCode, body: &str) -> RefreshTokenError
                 let message = error
                     .message
                     .unwrap_or_else(|| "refresh token already rotated".to_string());
-                return RefreshTokenError::transient(format!(
-                    "refresh_token_reused: {message}"
-                ));
+                return RefreshTokenError::transient(format!("refresh_token_reused: {message}"));
             }
         }
     }
 
     if let Ok(parsed) = serde_json::from_str::<OAuthErrorBody>(body) {
         if let Some(code) = parsed.error.as_deref() {
-            let description = parsed
-                .error_description
-                .as_deref()
-                .unwrap_or(code)
-                .trim();
+            let description = parsed.error_description.as_deref().unwrap_or(code).trim();
             let formatted = format!("OAuth error ({code}): {description}");
             match code {
                 "invalid_grant" | "invalid_client" | "invalid_scope" => {
-                    return RefreshTokenError::permanent(formatted)
+                    return RefreshTokenError::permanent(formatted);
                 }
                 "access_denied" => {
                     return RefreshTokenError::permanent(formatted);
@@ -852,7 +834,11 @@ pub struct AuthDotJson {
     #[serde(rename = "OPENAI_API_KEY")]
     pub openai_api_key: Option<String>,
 
-    #[serde(rename = "Z_AI_API_KEY", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "Z_AI_API_KEY",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub zai_api_key: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -881,8 +867,8 @@ mod tests {
     use crate::token_data::KnownPlan;
     use crate::token_data::PlanType;
     use base64::Engine;
-    use reqwest::StatusCode;
     use pretty_assertions::assert_eq;
+    use reqwest::StatusCode;
     use serde::Serialize;
     use serde_json::json;
     use tempfile::tempdir;
@@ -895,7 +881,7 @@ mod tests {
         let _ = write_auth_file(
             AuthFileParams {
                 openai_api_key: None,
-            zai_api_key: None,
+                zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             code_home.path(),
@@ -942,7 +928,7 @@ mod tests {
         let fake_jwt = write_auth_file(
             AuthFileParams {
                 openai_api_key: None,
-            zai_api_key: None,
+                zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             code_home.path(),
@@ -966,7 +952,7 @@ mod tests {
         assert_eq!(
             &AuthDotJson {
                 openai_api_key: None,
-            zai_api_key: None,
+                zai_api_key: None,
                 tokens: Some(TokenData {
                     id_token: IdTokenInfo {
                         email: Some("user@example.com".to_string()),
@@ -995,8 +981,8 @@ mod tests {
         let code_home = tempdir().unwrap();
         let fake_jwt = write_auth_file(
             AuthFileParams {
+                zai_api_key: None,
                 openai_api_key: Some("sk-test-key".to_string()),
-            zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             code_home.path(),
@@ -1020,7 +1006,7 @@ mod tests {
         assert_eq!(
             &AuthDotJson {
                 openai_api_key: None,
-            zai_api_key: None,
+                zai_api_key: None,
                 tokens: Some(TokenData {
                     id_token: IdTokenInfo {
                         email: Some("user@example.com".to_string()),
@@ -1049,7 +1035,7 @@ mod tests {
         write_auth_file(
             AuthFileParams {
                 openai_api_key: Some("sk-test-key".to_string()),
-            zai_api_key: None,
+                zai_api_key: None,
                 chatgpt_plan_type: "enterprise".to_string(),
             },
             code_home.path(),
@@ -1110,7 +1096,11 @@ mod tests {
 
     fn assert_permanent(body: &str, status: StatusCode) {
         let err = classify_refresh_failure(status, body);
-        assert!(err.is_permanent(), "expected permanent error, got {:?}", err.kind);
+        assert!(
+            err.is_permanent(),
+            "expected permanent error, got {:?}",
+            err.kind
+        );
     }
 
     fn assert_transient(body: &str, status: StatusCode) {
@@ -1178,7 +1168,7 @@ mod tests {
         let fake_jwt = write_auth_file(
             AuthFileParams {
                 openai_api_key: None,
-            zai_api_key: None,
+                zai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),
             },
             dir.path(),
@@ -1243,6 +1233,7 @@ mod tests {
 
     struct AuthFileParams {
         openai_api_key: Option<String>,
+        zai_api_key: Option<String>,
         chatgpt_plan_type: String,
     }
 
@@ -1276,6 +1267,7 @@ mod tests {
 
         let auth_json_data = json!({
             "OPENAI_API_KEY": params.openai_api_key,
+            "Z_AI_API_KEY": params.zai_api_key,
             "tokens": {
                 "id_token": fake_jwt,
                 "access_token": "test-access-token",
@@ -1389,10 +1381,8 @@ impl AuthManager {
         if let Ok(mut guard) = self.inner.write() {
             let changed = !AuthManager::auths_equal(&guard.auth, &new_auth);
             guard.auth = new_auth;
-            guard.preferred_auth_mode = env_auth
-                .as_ref()
-                .map(|auth| auth.mode)
-                .unwrap_or(preferred);
+            guard.preferred_auth_mode =
+                env_auth.as_ref().map(|auth| auth.mode).unwrap_or(preferred);
             changed
         } else {
             false

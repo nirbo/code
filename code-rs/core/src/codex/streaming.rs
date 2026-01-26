@@ -1,23 +1,19 @@
+use super::exec::ApplyPatchCommandContext;
+use super::exec::ExecCommandContext;
+use super::exec::ExecInvokeArgs;
+use super::exec::maybe_run_with_user_profile;
+use super::session::BackgroundExecState;
+use super::session::QueuedUserInput;
+use super::session::State;
+use super::session::WaitInterruptReason;
+use super::session::account_usage_context;
+use super::session::format_retry_eta;
+use super::session::is_connectivity_error;
+use super::session::spawn_usage_task;
 use super::*;
-use super::exec::{
-    ApplyPatchCommandContext,
-    ExecCommandContext,
-    ExecInvokeArgs,
-    maybe_run_with_user_profile,
-};
-use super::session::{
-    BackgroundExecState,
-    QueuedUserInput,
-    State,
-    WaitInterruptReason,
-    account_usage_context,
-    format_retry_eta,
-    is_connectivity_error,
-    spawn_usage_task,
-};
+use crate::account_switching::RateLimitSwitchState;
 use crate::auth;
 use crate::auth_accounts;
-use crate::account_switching::RateLimitSwitchState;
 use crate::protocol::McpListToolsResponseEvent;
 use code_app_server_protocol::AuthMode as AppAuthMode;
 
@@ -71,13 +67,7 @@ impl AgentTask {
             let tc_clone = Arc::clone(&turn_context);
             let sub_clone = sub_id.clone();
             tokio::spawn(async move {
-                compact::run_compact_task(
-                    sess_clone,
-                    tc_clone,
-                    sub_clone,
-                    input,
-                )
-                .await;
+                compact::run_compact_task(sess_clone, tc_clone, sub_clone, input).await;
             })
             .abort_handle()
         };
@@ -115,9 +105,10 @@ impl AgentTask {
     pub(super) fn abort(self, reason: TurnAbortReason) {
         if !self.handle.is_finished() {
             self.handle.abort();
-            let event = self
-                .sess
-                .make_event(&self.sub_id, EventMsg::TurnAborted(TurnAbortedEvent { reason }));
+            let event = self.sess.make_event(
+                &self.sub_id,
+                EventMsg::TurnAborted(TurnAbortedEvent { reason }),
+            );
             let sess = self.sess.clone();
             let sub_id = self.sub_id.clone();
             let kind = self.kind;
@@ -146,7 +137,10 @@ pub(super) async fn submission_loop(
         let event = Event {
             id: sub_id,
             event_seq: 0,
-            msg: EventMsg::Error(ErrorEvent { message: "No session initialized, expected 'ConfigureSession' as first Op".to_string() }),
+            msg: EventMsg::Error(ErrorEvent {
+                message: "No session initialized, expected 'ConfigureSession' as first Op"
+                    .to_string(),
+            }),
             order: None,
         };
         tx_event.send(event).await.ok();
@@ -169,7 +163,10 @@ pub(super) async fn submission_loop(
                     sess.abort();
                 });
             }
-            Op::CancelAgents { batch_ids, agent_ids } => {
+            Op::CancelAgents {
+                batch_ids,
+                agent_ids,
+            } => {
                 let sess_arc = match sess.as_ref() {
                     Some(sess) => Arc::clone(sess),
                     None => {
@@ -225,8 +222,17 @@ pub(super) async fn submission_loop(
                 sess_arc.send_event(event).await;
             }
             Op::AddPendingInputDeveloper { text } => {
-                let sess = match sess.as_ref() { Some(s) => s.clone(), None => { send_no_session_event(sub.id).await; continue; } };
-                let dev_msg = ResponseInputItem::Message { role: "developer".to_string(), content: vec![ContentItem::InputText { text }] };
+                let sess = match sess.as_ref() {
+                    Some(s) => s.clone(),
+                    None => {
+                        send_no_session_event(sub.id).await;
+                        continue;
+                    }
+                };
+                let dev_msg = ResponseInputItem::Message {
+                    role: "developer".to_string(),
+                    content: vec![ContentItem::InputText { text }],
+                };
                 let should_start_turn = sess.enqueue_out_of_turn_item(dev_msg);
                 if should_start_turn {
                     sess.cleanup_old_status_items().await;
@@ -235,7 +241,8 @@ pub(super) async fn submission_loop(
                     let sentinel_input = vec![InputItem::Text {
                         text: PENDING_ONLY_SENTINEL.to_string(),
                     }];
-                    let agent = AgentTask::spawn(Arc::clone(&sess), turn_context, sub_id, sentinel_input);
+                    let agent =
+                        AgentTask::spawn(Arc::clone(&sess), turn_context, sub_id, sentinel_input);
                     sess.set_task(agent);
                 }
             }
@@ -263,7 +270,12 @@ pub(super) async fn submission_loop(
                 if !cwd.is_absolute() {
                     let message = format!("cwd is not absolute: {cwd:?}");
                     error!(message);
-                    let event = Event { id: sub.id, event_seq: 0, msg: EventMsg::Error(ErrorEvent { message }), order: None };
+                    let event = Event {
+                        id: sub.id,
+                        event_seq: 0,
+                        msg: EventMsg::Error(ErrorEvent { message }),
+                        order: None,
+                    };
                     if let Err(e) = tx_event.send(event).await {
                         error!("failed to send error message: {e:?}");
                     }
@@ -273,10 +285,13 @@ pub(super) async fn submission_loop(
                 let mut updated_config = (*current_config).clone();
 
                 let model_changed = !updated_config.model.eq_ignore_ascii_case(&model);
-                let effort_changed = updated_config.model_reasoning_effort != model_reasoning_effort;
+                let effort_changed =
+                    updated_config.model_reasoning_effort != model_reasoning_effort;
                 let preferred_effort_changed = preferred_model_reasoning_effort
                     .as_ref()
-                    .map(|preferred| updated_config.preferred_model_reasoning_effort != Some(*preferred))
+                    .map(|preferred| {
+                        updated_config.preferred_model_reasoning_effort != Some(*preferred)
+                    })
                     .unwrap_or(false);
 
                 let old_model_family = updated_config.model_family.clone();
@@ -339,8 +354,9 @@ pub(super) async fn submission_loop(
                     updated_config.tool_output_max_bytes = new_default_tool_output_max_bytes;
                 }
 
-                let skills_outcome =
-                    updated_config.skills_enabled.then(|| load_skills(&updated_config));
+                let skills_outcome = updated_config
+                    .skills_enabled
+                    .then(|| load_skills(&updated_config));
                 if let Some(outcome) = &skills_outcome {
                     for err in &outcome.errors {
                         warn!("invalid skill {}: {}", err.path.display(), err.message);
@@ -349,7 +365,9 @@ pub(super) async fn submission_loop(
 
                 let computed_user_instructions = get_user_instructions(
                     &updated_config,
-                    skills_outcome.as_ref().map(|outcome| outcome.skills.as_slice()),
+                    skills_outcome
+                        .as_ref()
+                        .map(|outcome| outcome.skills.as_slice()),
                 )
                 .await;
                 updated_config.user_instructions = computed_user_instructions.clone();
@@ -386,7 +404,9 @@ pub(super) async fn submission_loop(
 
                 let new_config = Arc::new(updated_config);
 
-                if new_config.model_explicit && (model_changed || effort_changed || preferred_effort_changed) {
+                if new_config.model_explicit
+                    && (model_changed || effort_changed || preferred_effort_changed)
+                {
                     if let Err(err) = persist_model_selection(
                         &new_config.code_home,
                         new_config.active_profile.as_deref(),
@@ -414,7 +434,7 @@ pub(super) async fn submission_loop(
                                 SessionSource::Cli,
                             ),
                         )
-                            .await
+                        .await
                         {
                             Ok(r) => Some(r),
                             Err(e) => {
@@ -446,7 +466,9 @@ pub(super) async fn submission_loop(
 
                     // SAFETY: setting a process-wide env var is intentional here to
                     // coordinate sub-agent debug behaviour launched from this session.
-                    unsafe { std::env::set_var("CODE_SUBAGENT_DEBUG", "1"); }
+                    unsafe {
+                        std::env::set_var("CODE_SUBAGENT_DEBUG", "1");
+                    }
                     match crate::config::find_code_home() {
                         Ok(mut debug_root) => {
                             debug_root.push("debug_logs");
@@ -461,7 +483,9 @@ pub(super) async fn submission_loop(
                     }
                 } else {
                     // SAFETY: removing the coordination flag is safe when debug is off.
-                    unsafe { std::env::remove_var("CODE_SUBAGENT_DEBUG"); }
+                    unsafe {
+                        std::env::remove_var("CODE_SUBAGENT_DEBUG");
+                    }
                     let mut manager = AGENT_MANAGER.write().await;
                     manager.set_debug_log_root(None);
                 }
@@ -489,11 +513,7 @@ pub(super) async fn submission_loop(
                         config.model_auto_compact_token_limit,
                         to_proto_approval_policy(approval_policy),
                         to_proto_sandbox_policy(sandbox_policy.clone()),
-                        config
-                            .mcp_servers
-                            .keys()
-                            .map(String::as_str)
-                            .collect(),
+                        config.mcp_servers.keys().map(String::as_str).collect(),
                         config.active_profile.clone(),
                     );
                     manager
@@ -539,10 +559,8 @@ pub(super) async fn submission_loop(
                     .into_iter()
                     .flatten()
                     {
-                        excluded_tools.insert((
-                            tool.mcp_server.to_string(),
-                            tool.tool_name.to_string(),
-                        ));
+                        excluded_tools
+                            .insert((tool.mcp_server.to_string(), tool.tool_name.to_string()));
                     }
                 }
 
@@ -551,20 +569,18 @@ pub(super) async fn submission_loop(
                     drop(old_session_arc);
                 }
 
-                let (mcp_connection_manager, failed_clients) = match McpConnectionManager::new(
-                    config.mcp_servers.clone(),
-                    excluded_tools,
-                )
-                .await
-                {
-                    Ok((mgr, failures)) => (mgr, failures),
-                    Err(e) => {
-                        let message = format!("Failed to create MCP connection manager: {e:#}");
-                        error!("{message}");
-                        mcp_connection_errors.push(message);
-                        (McpConnectionManager::default(), Default::default())
-                    }
-                };
+                let (mcp_connection_manager, failed_clients) =
+                    match McpConnectionManager::new(config.mcp_servers.clone(), excluded_tools)
+                        .await
+                    {
+                        Ok((mgr, failures)) => (mgr, failures),
+                        Err(e) => {
+                            let message = format!("Failed to create MCP connection manager: {e:#}");
+                            error!("{message}");
+                            mcp_connection_errors.push(message);
+                            (McpConnectionManager::default(), Default::default())
+                        }
+                    };
 
                 // Surface individual client start-up failures to the user.
                 if !failed_clients.is_empty() {
@@ -574,9 +590,9 @@ pub(super) async fn submission_loop(
                             crate::protocol::McpServerFailurePhase::Start => {
                                 format!("MCP server `{server_name}` failed to start: {detail}")
                             }
-                            crate::protocol::McpServerFailurePhase::ListTools => format!(
-                                "MCP server `{server_name}` failed to list tools: {detail}"
-                            ),
+                            crate::protocol::McpServerFailurePhase::ListTools => {
+                                format!("MCP server `{server_name}` failed to list tools: {detail}")
+                            }
                         };
                         error!("{message}");
                         mcp_connection_errors.push(message);
@@ -695,12 +711,12 @@ pub(super) async fn submission_loop(
                 }
                 let mut replay_history_items: Option<Vec<ResponseItem>> = None;
 
-
                 // Patch restored state into the newly created session.
                 if let Some(sess_arc) = &sess {
                     if let Some(items) = &restored_items {
                         let turn_context = sess_arc.make_turn_context();
-                        let reconstructed = sess_arc.reconstruct_history_from_rollout(&turn_context, items);
+                        let reconstructed =
+                            sess_arc.reconstruct_history_from_rollout(&turn_context, items);
                         {
                             let mut st = sess_arc.state.lock().unwrap();
                             st.history = ConversationHistory::new();
@@ -766,7 +782,9 @@ pub(super) async fn submission_loop(
 
                 if let Some(sess_arc) = &sess {
                     spawn_bridge_listener(sess_arc.clone());
-                    sess_arc.run_session_hooks(ProjectHookEvent::SessionStart).await;
+                    sess_arc
+                        .run_session_hooks(ProjectHookEvent::SessionStart)
+                        .await;
                 }
 
                 // Initialize agent manager after SessionConfigured is sent
@@ -830,7 +848,8 @@ pub(super) async fn submission_loop(
 
                 // Spawn a new agent for this user input.
                 let turn_context = sess.make_turn_context_with_schema(final_output_json_schema);
-                let agent = AgentTask::spawn(Arc::clone(&sess), turn_context, sub.id.clone(), items);
+                let agent =
+                    AgentTask::spawn(Arc::clone(&sess), turn_context, sub.id.clone(), items);
                 sess.set_task(agent);
             }
             Op::QueueUserInput { items } => {
@@ -856,7 +875,8 @@ pub(super) async fn submission_loop(
                     // No task running: treat this as immediate user input without aborting.
                     sess.cleanup_old_status_items().await;
                     let turn_context = sess.make_turn_context();
-                    let agent = AgentTask::spawn(Arc::clone(&sess), turn_context, sub.id.clone(), items);
+                    let agent =
+                        AgentTask::spawn(Arc::clone(&sess), turn_context, sub.id.clone(), items);
                     sess.set_task(agent);
                 }
             }
@@ -1085,9 +1105,15 @@ pub(super) async fn submission_loop(
                         description: skill.description,
                         path: skill.path,
                         scope: match skill.scope {
-                            crate::skills::model::SkillScope::Repo => code_protocol::skills::SkillScope::Repo,
-                            crate::skills::model::SkillScope::User => code_protocol::skills::SkillScope::User,
-                            crate::skills::model::SkillScope::System => code_protocol::skills::SkillScope::System,
+                            crate::skills::model::SkillScope::Repo => {
+                                code_protocol::skills::SkillScope::Repo
+                            }
+                            crate::skills::model::SkillScope::User => {
+                                code_protocol::skills::SkillScope::User
+                            }
+                            crate::skills::model::SkillScope::System => {
+                                code_protocol::skills::SkillScope::System
+                            }
                         },
                         content: skill.content,
                     })
@@ -1113,17 +1139,17 @@ pub(super) async fn submission_loop(
 
                 let prompt_text = sess.compact_prompt_text();
                 // Attempt to inject input into current task
-                if let Err(items) = sess.inject_input(vec![InputItem::Text {
-                    text: prompt_text,
-                }]) {
+                if let Err(items) = sess.inject_input(vec![InputItem::Text { text: prompt_text }]) {
                     let turn_context = sess.make_turn_context();
                     compact::spawn_compact_task(sess.clone(), turn_context, sub.id.clone(), items);
                 } else {
                     let was_empty = sess.enqueue_manual_compact(sub.id.clone());
                     let message = if was_empty {
-                        "Manual compact queued; it will run after the current response finishes.".to_string()
+                        "Manual compact queued; it will run after the current response finishes."
+                            .to_string()
                     } else {
-                        "Manual compact already queued; waiting for the current response to finish.".to_string()
+                        "Manual compact already queued; waiting for the current response to finish."
+                            .to_string()
                     };
                     let event = sess.make_event(
                         &sub.id,
@@ -1186,7 +1212,9 @@ pub(super) async fn submission_loop(
                     }
                 }
                 if let Some(ref sess_arc) = sess {
-                    sess_arc.run_session_hooks(ProjectHookEvent::SessionEnd).await;
+                    sess_arc
+                        .run_session_hooks(ProjectHookEvent::SessionEnd)
+                        .await;
                 }
                 let event = match sess {
                     Some(ref sess_arc) => sess_arc.make_event(&sub.id, EventMsg::ShutdownComplete),
@@ -1280,7 +1308,12 @@ async fn spawn_review_thread(
     let review_otel = parent_turn_context
         .client
         .get_otel_event_manager()
-        .map(|mgr| mgr.with_model(review_config.model.as_str(), review_config.model_family.slug.as_str()));
+        .map(|mgr| {
+            mgr.with_model(
+                review_config.model.as_str(),
+                review_config.model_family.slug.as_str(),
+            )
+        });
 
     let review_client = ModelClient::new(
         review_config.clone(),
@@ -1324,14 +1357,16 @@ async fn spawn_review_thread(
         text: review_prompt_text,
     }];
 
-    let task = AgentTask::review(Arc::clone(&sess), Arc::clone(&review_turn_context), sub_id.clone(), review_input);
+    let task = AgentTask::review(
+        Arc::clone(&sess),
+        Arc::clone(&review_turn_context),
+        sub_id.clone(),
+        review_input,
+    );
     sess.set_active_review(review_request.clone());
     sess.set_task(task);
 
-    let event = sess.make_event(
-        &sub_id,
-        EventMsg::EnteredReviewMode(review_request.clone()),
-    );
+    let event = sess.make_event(&sub_id, EventMsg::EnteredReviewMode(review_request.clone()));
     sess.send_event(event).await;
 }
 
@@ -1394,7 +1429,9 @@ async fn exit_review_mode(
     let developer_message = ResponseItem::Message {
         id: None,
         role: "user".to_string(),
-        content: vec![ContentItem::InputText { text: developer_text.clone() }],
+        content: vec![ContentItem::InputText {
+            text: developer_text.clone(),
+        }],
     };
 
     session
@@ -1456,7 +1493,12 @@ fn parse_review_output_event(text: &str) -> ReviewOutputEvent {
 ///   back to the model in the next turn.
 /// - If the model sends only an assistant message, we record it in the
 ///   conversation history and consider the agent complete.
-async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: String, input: Vec<InputItem>) {
+async fn run_agent(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    sub_id: String,
+    input: Vec<InputItem>,
+) {
     if input.is_empty() {
         return;
     }
@@ -1551,9 +1593,7 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
                 }
                 initial_response_item = Some(first_pending);
             } else {
-                tracing::warn!(
-                    "pending-only turn had no queued input; skipping model invocation"
-                );
+                tracing::warn!("pending-only turn had no queued input; skipping model invocation");
                 break;
             }
         }
@@ -1725,16 +1765,17 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
                     .unwrap_or(i64::MAX);
                 let most_recent_usage_tokens: Option<i64> = {
                     let state = sess.state.lock().unwrap();
-                    state.token_usage_info.as_ref().and_then(|info| {
-                        info.last_token_usage.total_tokens.try_into().ok()
-                    })
+                    state
+                        .token_usage_info
+                        .as_ref()
+                        .and_then(|info| info.last_token_usage.total_tokens.try_into().ok())
                 };
                 // auto_compact_token_limit is defined relative to a single turn's
                 // token usage (input + output). Using the cumulative total caused
                 // the limit check to stay tripped permanently once crossed, even
                 // after compacting history, which spammed repeated /compact runs.
-                let token_limit_reached = most_recent_usage_tokens
-                    .map_or(false, |tokens| tokens >= limit);
+                let token_limit_reached =
+                    most_recent_usage_tokens.map_or(false, |tokens| tokens >= limit);
 
                 // As long as compaction works well in getting us way below the token limit,
                 // we shouldn't worry about being in an infinite loop. However, guard against
@@ -1743,13 +1784,12 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
                     did_proactive_compact_this_iteration = true;
                     let attempt_req = sess.current_request_ordinal();
                     let order = sess.next_background_order(&sub_id, attempt_req, None);
-                    sess
-                        .notify_background_event_with_order(
-                            &sub_id,
-                            order,
-                            "Token limit reached; running /compact and continuing…".to_string(),
-                        )
-                        .await;
+                    sess.notify_background_event_with_order(
+                        &sub_id,
+                        order,
+                        "Token limit reached; running /compact and continuing…".to_string(),
+                    )
+                    .await;
 
                     // Choose between local and remote compact based on auth mode,
                     // matching upstream codex-rs behavior
@@ -1791,7 +1831,10 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
                         &items_to_record_in_conversation_history,
                     );
                     if let Some(m) = last_task_message.as_ref() {
-                        tracing::info!("core.turn completed: last_assistant_message.len={}", m.len());
+                        tracing::info!(
+                            "core.turn completed: last_assistant_message.len={}",
+                            m.len()
+                        );
                     }
                     sess.maybe_notify(UserNotification::AgentTurnComplete {
                         turn_id: sub_id.clone(),
@@ -1805,7 +1848,9 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
                 info!("Turn error: {e:#}");
                 let event = sess.make_event(
                     &sub_id,
-                    EventMsg::Error(ErrorEvent { message: e.to_string() }),
+                    EventMsg::Error(ErrorEvent {
+                        message: e.to_string(),
+                    }),
                 );
                 sess.tx_event.send(event).await.ok();
                 if is_review_mode && !review_exit_emitted {
@@ -1839,7 +1884,9 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
         }),
     );
     match &event.msg {
-        EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message: Some(m) }) => {
+        EventMsg::TaskComplete(TaskCompleteEvent {
+            last_agent_message: Some(m),
+        }) => {
             tracing::info!("core.emit TaskComplete last_agent_message.len={}", m.len());
         }
         _ => {}
@@ -1853,9 +1900,7 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
             Arc::clone(&sess),
             turn_context,
             compact_sub_id,
-            vec![InputItem::Text {
-                text: prompt_text,
-            }],
+            vec![InputItem::Text { text: prompt_text }],
         );
         return;
     }
@@ -1867,7 +1912,8 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
             let turn_context = sess_clone.make_turn_context();
             let submission_id = queued.submission_id;
             let items = queued.core_items;
-            let agent = AgentTask::spawn(Arc::clone(&sess_clone), turn_context, submission_id, items);
+            let agent =
+                AgentTask::spawn(Arc::clone(&sess_clone), turn_context, submission_id, items);
             sess_clone.set_task(agent);
         });
     }
@@ -1908,11 +1954,8 @@ async fn run_turn(
         // Build status items (screenshots, system status) fresh for each attempt
         let status_items = build_turn_status_items(sess).await;
 
-        let mut prepend_developer_messages: Vec<String> = tc
-            .demo_developer_message
-            .clone()
-            .into_iter()
-            .collect();
+        let mut prepend_developer_messages: Vec<String> =
+            tc.demo_developer_message.clone().into_iter().collect();
         if should_inject_html_sanitizer_guardrails(&attempt_input) {
             prepend_developer_messages.push(HTML_SANITIZER_GUARDRAILS_MESSAGE.to_string());
         }
@@ -2009,9 +2052,9 @@ async fn run_turn(
                             });
                         if let Some(current_account_id) = current_account_id {
                             let now = Utc::now();
-                            let blocked_until = limit_err.resets_in_seconds.map(|seconds| {
-                                now + chrono::Duration::seconds(seconds as i64)
-                            });
+                            let blocked_until = limit_err
+                                .resets_in_seconds
+                                .map(|seconds| now + chrono::Duration::seconds(seconds as i64));
                             let current_auth_mode = auth
                                 .as_ref()
                                 .map(|current| current.mode)
@@ -2041,16 +2084,12 @@ async fn run_turn(
                                         "rate limit hit; auto-switching active account"
                                     );
                                     auth_manager.reload();
-                                    let order = sess.next_background_order(&sub_id, attempt_req, None);
+                                    let order =
+                                        sess.next_background_order(&sub_id, attempt_req, None);
                                     let notice = format!(
                                         "Auto-switch: now using {next_label} due to usage limit."
                                     );
-                                    sess
-                                        .notify_background_event_with_order(
-                                            &sub_id,
-                                            order,
-                                            notice,
-                                        )
+                                    sess.notify_background_event_with_order(&sub_id, order, notice)
                                         .await;
                                     switched = true;
                                 }
@@ -2073,9 +2112,9 @@ async fn run_turn(
                 }
 
                 let now = Utc::now();
-                let retry_after = limit_err
-                    .retry_after(now)
-                    .unwrap_or_else(|| RetryAfter::from_duration(std::time::Duration::from_secs(5 * 60), now));
+                let retry_after = limit_err.retry_after(now).unwrap_or_else(|| {
+                    RetryAfter::from_duration(std::time::Duration::from_secs(5 * 60), now)
+                });
                 let eta = format_retry_eta(&retry_after);
                 let mut retry_message = format!("{limit_err} Auto-retrying");
                 if let Some(eta) = eta {
@@ -2094,42 +2133,42 @@ async fn run_turn(
                 if !did_auto_compact {
                     if let CodexErr::Stream(msg, _maybe_delay, _req_id) = &e {
                         let lower = msg.to_ascii_lowercase();
-                        let looks_like_context_overflow =
-                            lower.contains("exceeds the context window")
-                                || lower.contains("exceed the context window")
-                                || lower.contains("context length exceeded")
-                                || lower.contains("maximum context length")
-                                || (lower.contains("context window")
-                                    && (lower.contains("exceed")
-                                        || lower.contains("exceeded")
-                                        || lower.contains("full")
-                                        || lower.contains("too long")));
+                        let looks_like_context_overflow = lower
+                            .contains("exceeds the context window")
+                            || lower.contains("exceed the context window")
+                            || lower.contains("context length exceeded")
+                            || lower.contains("maximum context length")
+                            || (lower.contains("context window")
+                                && (lower.contains("exceed")
+                                    || lower.contains("exceeded")
+                                    || lower.contains("full")
+                                    || lower.contains("too long")));
 
                         if looks_like_context_overflow {
                             did_auto_compact = true;
-                            sess
-                                .notify_stream_error(
-                                    &sub_id,
-                                    "Model hit context-window limit; running /compact and retrying…"
-                                        .to_string(),
-                                )
-                                .await;
+                            sess.notify_stream_error(
+                                &sub_id,
+                                "Model hit context-window limit; running /compact and retrying…"
+                                    .to_string(),
+                            )
+                            .await;
 
                             let previous_input_snapshot = input.clone();
-                            let compacted_history = if compact::should_use_remote_compact_task(sess).await {
-                                run_inline_remote_auto_compact_task(
-                                    Arc::clone(&sess),
-                                    Arc::clone(&turn_context),
-                                    Vec::new(),
-                                )
-                                .await
-                            } else {
-                                compact::run_inline_auto_compact_task(
-                                    Arc::clone(&sess),
-                                    Arc::clone(&turn_context),
-                                )
-                                .await
-                            };
+                            let compacted_history =
+                                if compact::should_use_remote_compact_task(sess).await {
+                                    run_inline_remote_auto_compact_task(
+                                        Arc::clone(&sess),
+                                        Arc::clone(&turn_context),
+                                        Vec::new(),
+                                    )
+                                    .await
+                                } else {
+                                    compact::run_inline_auto_compact_task(
+                                        Arc::clone(&sess),
+                                        Arc::clone(&turn_context),
+                                    )
+                                    .await
+                                };
 
                             // Reset any partial attempt state and rebuild the request payload using the
                             // newly compacted history plus the current user turn items.
@@ -2144,7 +2183,11 @@ async fn run_turn(
                                 }
                                 if !pending_input_tail.is_empty() {
                                     let (missing_calls, filtered_outputs) =
-                                        reconcile_pending_tool_outputs(&pending_input_tail, &rebuilt, &previous_input_snapshot);
+                                        reconcile_pending_tool_outputs(
+                                            &pending_input_tail,
+                                            &rebuilt,
+                                            &previous_input_snapshot,
+                                        );
                                     if !missing_calls.is_empty() {
                                         rebuilt.extend(missing_calls);
                                     }
@@ -2174,7 +2217,9 @@ async fn run_turn(
                             .iter()
                             .filter_map(|ri| match ri {
                                 ResponseItem::FunctionCall { call_id, .. } => Some(call_id.clone()),
-                                ResponseItem::LocalShellCall { call_id: Some(c), .. } => Some(c.clone()),
+                                ResponseItem::LocalShellCall {
+                                    call_id: Some(c), ..
+                                } => Some(c.clone()),
                                 _ => None,
                             })
                             .collect();
@@ -2187,7 +2232,9 @@ async fn run_turn(
                                         attempt_input.push(item.clone());
                                     }
                                 }
-                                ResponseItem::LocalShellCall { call_id: Some(c), .. } => {
+                                ResponseItem::LocalShellCall {
+                                    call_id: Some(c), ..
+                                } => {
                                     if seen_calls.insert(c.clone()) {
                                         attempt_input.push(item.clone());
                                     }
@@ -2204,7 +2251,9 @@ async fn run_turn(
                         }
 
                         // If we have partial deltas, include a short ephemeral hint so the model can resume.
-                        if !sp.partial_assistant_text.is_empty() || !sp.partial_reasoning_summary.is_empty() {
+                        if !sp.partial_assistant_text.is_empty()
+                            || !sp.partial_reasoning_summary.is_empty()
+                        {
                             use code_protocol::models::ContentItem;
                             let mut hint = String::from(
                                 "[EPHEMERAL:RETRY_HINT]\nPrevious attempt aborted mid-stream. Continue without repeating.\n",
@@ -2222,7 +2271,10 @@ async fn run_turn(
                                     0
                                 };
                                 let tail = &s[start_idx..];
-                                hint.push_str(&format!("Last reasoning summary fragment:\n{}\n\n", tail));
+                                hint.push_str(&format!(
+                                    "Last reasoning summary fragment:\n{}\n\n",
+                                    tail
+                                ));
                             }
                             if !sp.partial_assistant_text.is_empty() {
                                 let s = &sp.partial_assistant_text;
@@ -2237,7 +2289,10 @@ async fn run_turn(
                                     0
                                 };
                                 let tail = &s[start_idx..];
-                                hint.push_str(&format!("Last assistant text fragment:\n{}\n", tail));
+                                hint.push_str(&format!(
+                                    "Last assistant text fragment:\n{}\n",
+                                    tail
+                                ));
                             }
                             attempt_input.push(ResponseItem::Message {
                                 id: None,
@@ -2250,9 +2305,8 @@ async fn run_turn(
 
                 if is_connectivity && retries >= max_retries {
                     let probe = tc.client.get_provider().base_url_for_probe();
-                    let wait_message = format!(
-                        "Network unavailable; waiting to reconnect to {probe} ({e})"
-                    );
+                    let wait_message =
+                        format!("Network unavailable; waiting to reconnect to {probe} ({e})");
                     sess.notify_stream_error(&sub_id, wait_message).await;
                     drain_scratchpad_into_attempt(&mut attempt_input);
                     wait_for_connectivity(&probe).await;
@@ -2278,13 +2332,13 @@ async fn run_turn(
                     // Surface retry information to any UI/front‑end so the
                     // user understands what is happening instead of staring
                     // at a seemingly frozen screen.
-                    let mut retry_message =
-                        format!("stream error: {e}; retrying in {delay:?}");
+                    let mut retry_message = format!("stream error: {e}; retrying in {delay:?}");
                     if let Some(eta) = retry_eta {
                         retry_message.push_str(&format!(" (next attempt at {eta})"));
                     }
                     retry_message.push('…');
-                    sess.notify_stream_error(&sub_id, retry_message.clone()).await;
+                    sess.notify_stream_error(&sub_id, retry_message.clone())
+                        .await;
                     // Pull any partial progress from this attempt and append to
                     // the next request's input so we do not lose tool progress
                     // or already-finalized items.
@@ -2307,8 +2361,7 @@ async fn run_turn(
     }
 }
 
-const HTML_SANITIZER_GUARDRAILS_MESSAGE: &str =
-    "TB2 HTML/XSS guardrails:\n- Do NOT use DOTALL/full-document regex (e.g. `<script.*?>.*?</script>`); catastrophic backtracking risk.\n- Prefer linear-time scanning with quote/state tracking; if using regex, only on bounded substrings (single tags).\n- Perf smoke test: write malformed `/tmp/stress.html` and run `timeout 5s python3 /app/filter.py /tmp/stress.html` (or equivalent). If it times out, rewrite for linear-time behavior.";
+const HTML_SANITIZER_GUARDRAILS_MESSAGE: &str = "TB2 HTML/XSS guardrails:\n- Do NOT use DOTALL/full-document regex (e.g. `<script.*?>.*?</script>`); catastrophic backtracking risk.\n- Prefer linear-time scanning with quote/state tracking; if using regex, only on bounded substrings (single tags).\n- Perf smoke test: write malformed `/tmp/stress.html` and run `timeout 5s python3 /app/filter.py /tmp/stress.html` (or equivalent). If it times out, rewrite for linear-time behavior.";
 
 fn should_inject_html_sanitizer_guardrails(input: &[ResponseItem]) -> bool {
     let mut user_messages_seen = 0u32;
@@ -2354,7 +2407,10 @@ fn should_inject_html_sanitizer_guardrails(input: &[ResponseItem]) -> bool {
     let has_filtering =
         lower.contains("filter") || lower.contains("strip") || lower.contains("remove");
 
-    has_xss || has_sanitize || has_filter_js_from_html || (has_html && has_script_tag && has_filtering)
+    has_xss
+        || has_sanitize
+        || has_filter_js_from_html
+        || (has_html && has_script_tag && has_filtering)
 }
 
 fn reconcile_pending_tool_outputs(
@@ -2399,7 +2455,10 @@ fn collect_tool_call_ids(items: &[ResponseItem]) -> HashSet<String> {
             ResponseItem::FunctionCall { call_id, .. } => {
                 ids.insert(call_id.clone());
             }
-            ResponseItem::LocalShellCall { call_id: Some(call_id), .. } => {
+            ResponseItem::LocalShellCall {
+                call_id: Some(call_id),
+                ..
+            } => {
                 ids.insert(call_id.clone());
             }
             ResponseItem::CustomToolCall { call_id, .. } => {
@@ -2413,9 +2472,16 @@ fn collect_tool_call_ids(items: &[ResponseItem]) -> HashSet<String> {
 
 fn find_call_item_by_id(items: &[ResponseItem], call_id: &str) -> Option<ResponseItem> {
     items.iter().rev().find_map(|item| match item {
-        ResponseItem::FunctionCall { call_id: existing, .. } if existing == call_id => Some(item.clone()),
-        ResponseItem::LocalShellCall { call_id: Some(existing), .. } if existing == call_id => Some(item.clone()),
-        ResponseItem::CustomToolCall { call_id: existing, .. } if existing == call_id => Some(item.clone()),
+        ResponseItem::FunctionCall {
+            call_id: existing, ..
+        } if existing == call_id => Some(item.clone()),
+        ResponseItem::LocalShellCall {
+            call_id: Some(existing),
+            ..
+        } if existing == call_id => Some(item.clone()),
+        ResponseItem::CustomToolCall {
+            call_id: existing, ..
+        } if existing == call_id => Some(item.clone()),
         _ => None,
     })
 }
@@ -2450,8 +2516,7 @@ impl<'a> TurnLatencyGuard<'a> {
         if !self.active {
             return;
         }
-        self
-            .sess
+        self.sess
             .turn_latency_request_completed(self.attempt_req, output_item_count, token_usage);
         self.active = false;
     }
@@ -2460,7 +2525,8 @@ impl<'a> TurnLatencyGuard<'a> {
         if !self.active {
             return;
         }
-        self.sess.turn_latency_request_failed(self.attempt_req, note);
+        self.sess
+            .turn_latency_request_failed(self.attempt_req, note);
         self.active = false;
     }
 }
@@ -2468,9 +2534,10 @@ impl<'a> TurnLatencyGuard<'a> {
 impl Drop for TurnLatencyGuard<'_> {
     fn drop(&mut self) {
         if self.active {
-            self
-                .sess
-                .turn_latency_request_failed(self.attempt_req, Some("dropped_without_outcome".to_string()));
+            self.sess.turn_latency_request_failed(
+                self.attempt_req,
+                Some("dropped_without_outcome".to_string()),
+            );
         }
     }
 }
@@ -2542,11 +2609,7 @@ async fn try_run_turn(
         Ok(stream) => stream,
         Err(e) => {
             turn_latency_guard.mark_failed(Some(format!("stream_init_failed: {e}")));
-            sess
-                .notify_stream_error(
-                    &sub_id,
-                    format!("[transport] failed to start stream: {e}"),
-                )
+            sess.notify_stream_error(&sub_id, format!("[transport] failed to start stream: {e}"))
                 .await;
             return Err(e);
         }
@@ -2561,8 +2624,7 @@ async fn try_run_turn(
         let Some(event) = event else {
             // Channel closed without yielding a final Completed event or explicit error.
             // Treat as a disconnected stream so the caller can retry.
-            turn_latency_guard
-                .mark_failed(Some("stream_closed_before_completed".to_string()));
+            turn_latency_guard.mark_failed(Some("stream_closed_before_completed".to_string()));
             return Err(CodexErr::Stream(
                 "stream closed before response.completed".into(),
                 None,
@@ -2583,9 +2645,21 @@ async fn try_run_turn(
         match event {
             ResponseEvent::Created => {}
             ResponseEvent::ServerReasoningIncluded(_included) => {}
-            ResponseEvent::OutputItemDone { item, sequence_number, output_index } => {
-                let response =
-                    handle_response_item(sess, turn_diff_tracker, sub_id, item.clone(), sequence_number, output_index, attempt_req).await?;
+            ResponseEvent::OutputItemDone {
+                item,
+                sequence_number,
+                output_index,
+            } => {
+                let response = handle_response_item(
+                    sess,
+                    turn_diff_tracker,
+                    sub_id,
+                    item.clone(),
+                    sequence_number,
+                    output_index,
+                    attempt_req,
+                )
+                .await?;
 
                 // Save into scratchpad so we can seed a retry if the stream drops later.
                 sess.scratchpad_push(&item, &response, &sub_id);
@@ -2604,7 +2678,10 @@ async fn try_run_turn(
                 let order = ctx.order_meta(attempt_req);
                 let ev = sess.make_event_with_order(
                     &sub_id,
-                    EventMsg::WebSearchBegin(WebSearchBeginEvent { call_id, query: None }),
+                    EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                        call_id,
+                        query: None,
+                    }),
                     order,
                     None,
                 );
@@ -2681,7 +2758,12 @@ async fn try_run_turn(
                 turn_latency_guard.mark_completed(output.len(), token_usage.as_ref());
                 return Ok(output);
             }
-            ResponseEvent::OutputTextDelta { delta, item_id, sequence_number, output_index } => {
+            ResponseEvent::OutputTextDelta {
+                delta,
+                item_id,
+                sequence_number,
+                output_index,
+            } => {
                 // Don't append to history during streaming - only send UI events.
                 // The complete message will be added to history when OutputItemDone arrives.
                 // This ensures items are recorded in the correct chronological order.
@@ -2693,7 +2775,14 @@ async fn try_run_turn(
                     output_index,
                     sequence_number,
                 };
-                let stamped = sess.make_event_with_order(&event_id, EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta: delta.clone() }), order, sequence_number);
+                let stamped = sess.make_event_with_order(
+                    &event_id,
+                    EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+                        delta: delta.clone(),
+                    }),
+                    order,
+                    sequence_number,
+                );
                 sess.tx_event.send(stamped).await.ok();
 
                 // Track partial assistant text in the scratchpad to help resume on retry.
@@ -2701,28 +2790,69 @@ async fn try_run_turn(
                 // We deliberately do not scope by item_id to keep implementation simple.
                 sess.scratchpad_add_text_delta(&delta);
             }
-            ResponseEvent::ReasoningSummaryDelta { delta, item_id, sequence_number, output_index, summary_index } => {
+            ResponseEvent::ReasoningSummaryDelta {
+                delta,
+                item_id,
+                sequence_number,
+                output_index,
+                summary_index,
+            } => {
                 // Use the item_id if present, otherwise fall back to sub_id
                 let mut event_id = item_id.unwrap_or_else(|| sub_id.to_string());
-                if let Some(si) = summary_index { event_id = format!("{}#s{}", event_id, si); }
-                let order = crate::protocol::OrderMeta { request_ordinal: attempt_req, output_index, sequence_number };
-                let stamped = sess.make_event_with_order(&event_id, EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta: delta.clone() }), order, sequence_number);
+                if let Some(si) = summary_index {
+                    event_id = format!("{}#s{}", event_id, si);
+                }
+                let order = crate::protocol::OrderMeta {
+                    request_ordinal: attempt_req,
+                    output_index,
+                    sequence_number,
+                };
+                let stamped = sess.make_event_with_order(
+                    &event_id,
+                    EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
+                        delta: delta.clone(),
+                    }),
+                    order,
+                    sequence_number,
+                );
                 sess.tx_event.send(stamped).await.ok();
 
                 // Buffer reasoning summary so we can include a hint on retry.
                 sess.scratchpad_add_reasoning_delta(&delta);
             }
             ResponseEvent::ReasoningSummaryPartAdded => {
-                let stamped = sess.make_event(&sub_id, EventMsg::AgentReasoningSectionBreak(AgentReasoningSectionBreakEvent {}));
+                let stamped = sess.make_event(
+                    &sub_id,
+                    EventMsg::AgentReasoningSectionBreak(AgentReasoningSectionBreakEvent {}),
+                );
                 sess.tx_event.send(stamped).await.ok();
             }
-            ResponseEvent::ReasoningContentDelta { delta, item_id, sequence_number, output_index, content_index } => {
+            ResponseEvent::ReasoningContentDelta {
+                delta,
+                item_id,
+                sequence_number,
+                output_index,
+                content_index,
+            } => {
                 if sess.show_raw_agent_reasoning {
                     // Use the item_id if present, otherwise fall back to sub_id
                     let mut event_id = item_id.unwrap_or_else(|| sub_id.to_string());
-                    if let Some(ci) = content_index { event_id = format!("{}#c{}", event_id, ci); }
-                    let order = crate::protocol::OrderMeta { request_ordinal: attempt_req, output_index, sequence_number };
-                    let stamped = sess.make_event_with_order(&event_id, EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent { delta }), order, sequence_number);
+                    if let Some(ci) = content_index {
+                        event_id = format!("{}#c{}", event_id, ci);
+                    }
+                    let order = crate::protocol::OrderMeta {
+                        request_ordinal: attempt_req,
+                        output_index,
+                        sequence_number,
+                    };
+                    let stamped = sess.make_event_with_order(
+                        &event_id,
+                        EventMsg::AgentReasoningRawContentDelta(
+                            AgentReasoningRawContentDeltaEvent { delta },
+                        ),
+                        order,
+                        sequence_number,
+                    );
                     sess.tx_event.send(stamped).await.ok();
                 }
             }
@@ -2751,8 +2881,7 @@ async fn try_run_turn(
                         }
                     });
                 }
-            }
-            // Note: ReasoningSummaryPartAdded handled above without scratchpad mutation.
+            } // Note: ReasoningSummaryPartAdded handled above without scratchpad mutation.
         }
     }
 }
@@ -2773,8 +2902,17 @@ async fn handle_response_item(
             let event_id = id.unwrap_or_else(|| sub_id.to_string());
             for item in content {
                 if let ContentItem::OutputText { text } = item {
-                    let order = crate::protocol::OrderMeta { request_ordinal: attempt_req, output_index, sequence_number: seq_hint };
-                    let stamped = sess.make_event_with_order(&event_id, EventMsg::AgentMessage(AgentMessageEvent { message: text }), order, seq_hint);
+                    let order = crate::protocol::OrderMeta {
+                        request_ordinal: attempt_req,
+                        output_index,
+                        sequence_number: seq_hint,
+                    };
+                    let stamped = sess.make_event_with_order(
+                        &event_id,
+                        EventMsg::AgentMessage(AgentMessageEvent { message: text }),
+                        order,
+                        seq_hint,
+                    );
                     sess.tx_event.send(stamped).await.ok();
                 }
             }
@@ -2801,8 +2939,17 @@ async fn handle_response_item(
                     ReasoningItemReasoningSummary::SummaryText { text } => text,
                 };
                 let eid = format!("{}#s{}", event_id, i);
-                let order = crate::protocol::OrderMeta { request_ordinal: attempt_req, output_index, sequence_number: seq_hint };
-                let stamped = sess.make_event_with_order(&eid, EventMsg::AgentReasoning(AgentReasoningEvent { text }), order, seq_hint);
+                let order = crate::protocol::OrderMeta {
+                    request_ordinal: attempt_req,
+                    output_index,
+                    sequence_number: seq_hint,
+                };
+                let stamped = sess.make_event_with_order(
+                    &eid,
+                    EventMsg::AgentReasoning(AgentReasoningEvent { text }),
+                    order,
+                    seq_hint,
+                );
                 sess.tx_event.send(stamped).await.ok();
             }
             if sess.show_raw_agent_reasoning && content.is_some() {
@@ -2812,8 +2959,17 @@ async fn handle_response_item(
                         ReasoningItemContent::ReasoningText { text } => text,
                         ReasoningItemContent::Text { text } => text,
                     };
-                    let order = crate::protocol::OrderMeta { request_ordinal: attempt_req, output_index, sequence_number: seq_hint };
-                    let stamped = sess.make_event_with_order(&event_id, EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }), order, seq_hint);
+                    let order = crate::protocol::OrderMeta {
+                        request_ordinal: attempt_req,
+                        output_index,
+                        sequence_number: seq_hint,
+                    };
+                    let stamped = sess.make_event_with_order(
+                        &event_id,
+                        EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }),
+                        order,
+                        seq_hint,
+                    );
                     sess.tx_event.send(stamped).await.ok();
                 }
             }
@@ -2873,17 +3029,17 @@ async fn handle_response_item(
 
             let exec_params = to_exec_params(params, sess);
             Some(
-            handle_container_exec_with_params(
-                exec_params,
-                sess,
-                turn_diff_tracker,
-                sub_id.to_string(),
-                effective_call_id,
-                seq_hint,
-                output_index,
-                attempt_req,
-            )
-            .await,
+                handle_container_exec_with_params(
+                    exec_params,
+                    sess,
+                    turn_diff_tracker,
+                    sub_id.to_string(),
+                    effective_call_id,
+                    seq_hint,
+                    output_index,
+                    attempt_req,
+                )
+                .await,
             )
         }
         ResponseItem::CustomToolCall { call_id, name, .. } => {
@@ -2907,7 +3063,14 @@ async fn handle_response_item(
         ResponseItem::WebSearchCall { id, action, .. } => {
             if let WebSearchAction::Search { query } = action {
                 let call_id = id.unwrap_or_else(|| "".to_string());
-                let event = sess.make_event_with_hint(&sub_id, EventMsg::WebSearchComplete(WebSearchCompleteEvent { call_id, query: Some(query) }), seq_hint);
+                let event = sess.make_event_with_hint(
+                    &sub_id,
+                    EventMsg::WebSearchComplete(WebSearchCompleteEvent {
+                        call_id,
+                        query: Some(query),
+                    }),
+                    seq_hint,
+                );
                 sess.tx_event.send(event).await.ok();
             }
             None
@@ -2933,11 +3096,12 @@ pub(super) fn ensure_user_dir(cwd: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-pub(super) fn write_agent_file(dir: &Path, filename: &str, content: &str) -> Result<PathBuf, String> {
-    if filename
-        .chars()
-        .any(|ch| matches!(ch, '/' | '\\' | '\0'))
-    {
+pub(super) fn write_agent_file(
+    dir: &Path,
+    filename: &str,
+    content: &str,
+) -> Result<PathBuf, String> {
+    if filename.chars().any(|ch| matches!(ch, '/' | '\\' | '\0')) {
         return Err(format!("Refusing to write invalid filename: {filename}"));
     }
     let candidate = Path::new(filename);
@@ -3031,8 +3195,17 @@ async fn handle_function_call(
                     return *output;
                 }
             };
-            handle_container_exec_with_params(params, sess, turn_diff_tracker, sub_id, call_id, seq_hint, output_index, attempt_req)
-                .await
+            handle_container_exec_with_params(
+                params,
+                sess,
+                turn_diff_tracker,
+                sub_id,
+                call_id,
+                seq_hint,
+                output_index,
+                attempt_req,
+            )
+            .await
         }
         "update_plan" => handle_update_plan(sess, &ctx, arguments).await,
         "request_user_input" => handle_request_user_input(sess, &ctx, arguments).await,
@@ -3045,7 +3218,9 @@ async fn handle_function_call(
         "wait" => handle_wait(sess, &ctx, arguments).await,
         "gh_run_wait" => handle_gh_run_wait(sess, &ctx, arguments).await,
         "kill" => handle_kill(sess, &ctx, arguments).await,
-        "code_bridge" | "code_bridge_subscription" => handle_code_bridge(sess, &ctx, arguments).await,
+        "code_bridge" | "code_bridge_subscription" => {
+            handle_code_bridge(sess, &ctx, arguments).await
+        }
         _ => {
             match sess.mcp_connection_manager.parse_tool_name(&name) {
                 Some((server, tool_name)) => {
@@ -3127,7 +3302,8 @@ async fn handle_request_user_input(
             return ResponseInputItem::FunctionCallOutput {
                 call_id: ctx.call_id.clone(),
                 output: FunctionCallOutputPayload {
-                    content: "request_user_input was cancelled before receiving a response".to_string(),
+                    content: "request_user_input was cancelled before receiving a response"
+                        .to_string(),
                     success: Some(false),
                 },
             };
@@ -3169,21 +3345,33 @@ async fn handle_browser_cleanup(sess: &Session, ctx: &ToolCallCtx) -> ResponseIn
                 match browser_manager.cleanup().await {
                     Ok(_) => ResponseInputItem::FunctionCallOutput {
                         call_id: call_id_clone,
-                        output: FunctionCallOutputPayload { content: "Browser cleanup completed".to_string(), success: Some(true) },
+                        output: FunctionCallOutputPayload {
+                            content: "Browser cleanup completed".to_string(),
+                            success: Some(true),
+                        },
                     },
                     Err(e) => ResponseInputItem::FunctionCallOutput {
                         call_id: call_id_clone,
-                        output: FunctionCallOutputPayload { content: format!("Cleanup failed: {}", e), success: Some(false) },
+                        output: FunctionCallOutputPayload {
+                            content: format!("Cleanup failed: {}", e),
+                            success: Some(false),
+                        },
                     },
                 }
             } else {
                 ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
-                    output: FunctionCallOutputPayload { content: "Browser is not initialized. Use browser_open to start the browser.".to_string(), success: Some(false) },
+                    output: FunctionCallOutputPayload {
+                        content:
+                            "Browser is not initialized. Use browser_open to start the browser."
+                                .to_string(),
+                        success: Some(false),
+                    },
                 }
             }
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 #[derive(Deserialize)]
@@ -3253,10 +3441,11 @@ async fn handle_code_bridge_with_cwd(
                     return ResponseInputItem::FunctionCallOutput {
                         call_id: ctx.call_id.clone(),
                         output: FunctionCallOutputPayload {
-                            content: "invalid or missing level (use errors|warn|info|trace)".to_string(),
+                            content: "invalid or missing level (use errors|warn|info|trace)"
+                                .to_string(),
                             success: Some(false),
                         },
-                    }
+                    };
                 }
             };
 
@@ -3279,18 +3468,29 @@ async fn handle_code_bridge_with_cwd(
 
             ResponseInputItem::FunctionCallOutput {
                 call_id: ctx.call_id.clone(),
-                output: FunctionCallOutputPayload { content: "ok".to_string(), success: Some(true) },
+                output: FunctionCallOutputPayload {
+                    content: "ok".to_string(),
+                    success: Some(true),
+                },
             }
         }
         "screenshot" => {
             send_bridge_control("screenshot", serde_json::json!({}));
             ResponseInputItem::FunctionCallOutput {
                 call_id: ctx.call_id.clone(),
-                output: FunctionCallOutputPayload { content: "requested screenshot".to_string(), success: Some(true) },
+                output: FunctionCallOutputPayload {
+                    content: "requested screenshot".to_string(),
+                    success: Some(true),
+                },
             }
         }
         "javascript" => {
-            let code = match args.code.as_ref().map(|c| c.trim()).filter(|c| !c.is_empty()) {
+            let code = match args
+                .code
+                .as_ref()
+                .map(|c| c.trim())
+                .filter(|c| !c.is_empty())
+            {
                 Some(c) => c,
                 None => {
                     return ResponseInputItem::FunctionCallOutput {
@@ -3299,13 +3499,16 @@ async fn handle_code_bridge_with_cwd(
                             content: "missing code for javascript action".to_string(),
                             success: Some(false),
                         },
-                    }
+                    };
                 }
             };
             send_bridge_control("javascript", serde_json::json!({ "code": code }));
             ResponseInputItem::FunctionCallOutput {
                 call_id: ctx.call_id.clone(),
-                output: FunctionCallOutputPayload { content: "sent javascript".to_string(), success: Some(true) },
+                output: FunctionCallOutputPayload {
+                    content: "sent javascript".to_string(),
+                    success: Some(true),
+                },
             }
         }
         // Keep legacy actions for backward compatibility with older prompts/tools
@@ -3380,7 +3583,11 @@ mod bridge_tool_tests {
     }
 }
 
-async fn handle_web_fetch(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_web_fetch(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     // Include raw params in begin event for observability
     let mut params_for_event = serde_json::from_str::<serde_json::Value>(&arguments).ok();
     // If call_id is provided, include a friendly "for" string with the command we are waiting on
@@ -3388,7 +3595,10 @@ async fn handle_web_fetch(sess: &Session, ctx: &ToolCallCtx, arguments: String) 
         if let Some(serde_json::Value::String(cid)) = map.get("call_id") {
             let st = sess.state.lock().unwrap();
             if let Some(bg) = st.background_execs.get(cid) {
-                map.insert("for".to_string(), serde_json::Value::String(bg.cmd_display.clone()));
+                map.insert(
+                    "for".to_string(),
+                    serde_json::Value::String(bg.cmd_display.clone()),
+                );
             }
         }
     }
@@ -4341,7 +4551,11 @@ async fn handle_web_fetch(sess: &Session, ctx: &ToolCallCtx, arguments: String) 
     ).await
 }
 
-async fn handle_image_view(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_image_view(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     use crate::protocol::ViewImageToolCallEvent;
     use serde::Deserialize;
     use serde_json::Value;
@@ -4380,7 +4594,7 @@ async fn handle_image_view(sess: &Session, ctx: &ToolCallCtx, arguments: String)
                 return ResponseInputItem::FunctionCallOutput {
                     call_id,
                     output: FunctionCallOutputPayload {
-                    content: "image_view requires a non-empty path".to_string(),
+                        content: "image_view requires a non-empty path".to_string(),
                         success: Some(false),
                     },
                 };
@@ -4444,9 +4658,7 @@ async fn handle_image_view(sess: &Session, ctx: &ToolCallCtx, arguments: String)
                 return ResponseInputItem::FunctionCallOutput {
                     call_id,
                     output: FunctionCallOutputPayload {
-                        content: format!(
-                            "image_view only supports image files (got {mime})"
-                        ),
+                        content: format!("image_view only supports image files (got {mime})"),
                         success: Some(false),
                     },
                 };
@@ -4500,25 +4712,34 @@ async fn handle_image_view(sess: &Session, ctx: &ToolCallCtx, arguments: String)
 
 // Wait for a background shell execution to complete.
 // Parameters: { call_id?: string, timeout_ms?: number }
-async fn handle_wait(
-    sess: &Session,
-    ctx: &ToolCallCtx,
-    arguments: String,
-) -> ResponseInputItem {
+async fn handle_wait(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
     use serde::Deserialize;
     #[derive(Deserialize, Clone)]
-    struct Params { #[serde(default)] call_id: Option<String>, #[serde(default)] timeout_ms: Option<u64> }
+    struct Params {
+        #[serde(default)]
+        call_id: Option<String>,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
+    }
     let mut params_for_event = serde_json::from_str::<serde_json::Value>(&arguments).ok();
     if let Some(serde_json::Value::Object(map)) = params_for_event.as_mut() {
         if let Some(serde_json::Value::String(cid)) = map.get("call_id") {
             let st = sess.state.lock().unwrap();
             if let Some(bg) = st.background_execs.get(cid) {
-                map.insert("for".to_string(), serde_json::Value::String(bg.cmd_display.clone()));
+                map.insert(
+                    "for".to_string(),
+                    serde_json::Value::String(bg.cmd_display.clone()),
+                );
             }
         }
     }
     let arguments_clone = arguments.clone();
-    let ctx_clone = ToolCallCtx::new(ctx.sub_id.clone(), ctx.call_id.clone(), ctx.seq_hint, ctx.output_index);
+    let ctx_clone = ToolCallCtx::new(
+        ctx.sub_id.clone(),
+        ctx.call_id.clone(),
+        ctx.seq_hint,
+        ctx.output_index,
+    );
     let ctx_for_closure = ctx_clone.clone();
     execute_custom_tool(
         sess,
@@ -4865,7 +5086,12 @@ async fn handle_gh_run_wait(
             }
         }
 
-        if let Some(symref) = run_git(cwd, &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]).await {
+        if let Some(symref) = run_git(
+            cwd,
+            &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        )
+        .await
+        {
             if let Some((_, name)) = symref.rsplit_once('/') {
                 if !name.is_empty() {
                     return name.to_string();
@@ -5187,11 +5413,7 @@ async fn handle_gh_run_wait(
 }
 
 // Kill a background shell execution by call_id.
-async fn handle_kill(
-    sess: &Session,
-    ctx: &ToolCallCtx,
-    arguments: String,
-) -> ResponseInputItem {
+async fn handle_kill(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
     use serde::Deserialize;
     #[derive(Deserialize, Clone)]
     struct Params {
@@ -5200,7 +5422,12 @@ async fn handle_kill(
 
     let mut params_for_event = serde_json::from_str::<serde_json::Value>(&arguments).ok();
     let arguments_clone = arguments.clone();
-    let ctx_clone = ToolCallCtx::new(ctx.sub_id.clone(), ctx.call_id.clone(), ctx.seq_hint, ctx.output_index);
+    let ctx_clone = ToolCallCtx::new(
+        ctx.sub_id.clone(),
+        ctx.call_id.clone(),
+        ctx.seq_hint,
+        ctx.output_index,
+    );
     let ctx_for_closure = ctx_clone.clone();
     let tx_event = sess.tx_event.clone();
 
@@ -5256,7 +5483,10 @@ async fn handle_kill(
                         return ResponseInputItem::FunctionCallOutput {
                             call_id: ctx_inner.call_id.clone(),
                             output: FunctionCallOutputPayload {
-                                content: format!("No background job found for call_id={}", parsed.call_id),
+                                content: format!(
+                                    "No background job found for call_id={}",
+                                    parsed.call_id
+                                ),
                                 success: Some(false),
                             },
                         };
@@ -5268,7 +5498,10 @@ async fn handle_kill(
                 return ResponseInputItem::FunctionCallOutput {
                     call_id: ctx_inner.call_id.clone(),
                     output: FunctionCallOutputPayload {
-                        content: format!("Background job {} has already completed.", parsed.call_id),
+                        content: format!(
+                            "Background job {} has already completed.",
+                            parsed.call_id
+                        ),
                         success: Some(false),
                     },
                 };
@@ -5329,13 +5562,12 @@ async fn handle_kill(
                 },
             }
         },
-    ).await
+    )
+    .await
 }
 
 fn to_exec_params(params: ShellToolCallParams, sess: &Session) -> ExecParams {
-    let timeout_ms = params
-        .timeout_ms
-        .map(|ms| ms.max(MIN_SHELL_TIMEOUT_MS));
+    let timeout_ms = params.timeout_ms.map(|ms| ms.max(MIN_SHELL_TIMEOUT_MS));
     let with_escalated_permissions = params
         .sandbox_permissions
         .and_then(|p| p.requires_escalated_permissions().then_some(true));
@@ -5429,19 +5661,19 @@ fn parse_container_exec_arguments(
     let parsed: std::result::Result<serde_json::Value, serde_json::Error> =
         serde_json::from_str(&arguments);
 
-    match parsed
-        .and_then(|mut value| {
-            if value.get("sandbox_permissions").is_none() {
-                let needs_escalated = value
-                    .get("with_escalated_permissions")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if needs_escalated {
-                    value["sandbox_permissions"] = serde_json::json!(SandboxPermissions::RequireEscalated);
-                }
+    match parsed.and_then(|mut value| {
+        if value.get("sandbox_permissions").is_none() {
+            let needs_escalated = value
+                .get("with_escalated_permissions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if needs_escalated {
+                value["sandbox_permissions"] =
+                    serde_json::json!(SandboxPermissions::RequireEscalated);
             }
-            serde_json::from_value::<ShellToolCallParams>(value)
-        }) {
+        }
+        serde_json::from_value::<ShellToolCallParams>(value)
+    }) {
         Ok(shell_tool_call_params) => Ok(to_exec_params(shell_tool_call_params, sess)),
         Err(e) => {
             // allow model to re-sample
@@ -5486,10 +5718,7 @@ pub(crate) async fn handle_agent_tool(
             let mut create_opts = match req.create.take() {
                 Some(opts) => opts,
                 None => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=create requires a 'create' object",
-                    );
+                    return agent_tool_failure(ctx, "action=create requires a 'create' object");
                 }
             };
 
@@ -5541,12 +5770,18 @@ pub(crate) async fn handle_agent_tool(
             }
             if let Some(ref ctx_str) = context {
                 if !ctx_str.is_empty() {
-                    create_event.insert("context".to_string(), serde_json::Value::String(ctx_str.clone()));
+                    create_event.insert(
+                        "context".to_string(),
+                        serde_json::Value::String(ctx_str.clone()),
+                    );
                 }
             }
             if let Some(ref output_str) = output {
                 if !output_str.is_empty() {
-                    create_event.insert("output".to_string(), serde_json::Value::String(output_str.clone()));
+                    create_event.insert(
+                        "output".to_string(),
+                        serde_json::Value::String(output_str.clone()),
+                    );
                 }
             }
             if let Some(ref files_vec) = files {
@@ -5571,46 +5806,48 @@ pub(crate) async fn handle_agent_tool(
             }
             if let Some(ref name_str) = normalized_name {
                 if !name_str.is_empty() {
-                    create_event.insert("name".to_string(), serde_json::Value::String(name_str.clone()));
+                    create_event.insert(
+                        "name".to_string(),
+                        serde_json::Value::String(name_str.clone()),
+                    );
                 }
             }
 
             let mut event_root = serde_json::Map::new();
-            event_root.insert("action".to_string(), serde_json::Value::String("create".to_string()));
-            event_root.insert("create".to_string(), serde_json::Value::Object(create_event));
+            event_root.insert(
+                "action".to_string(),
+                serde_json::Value::String("create".to_string()),
+            );
+            event_root.insert(
+                "create".to_string(),
+                serde_json::Value::Object(create_event),
+            );
             let event_payload = serde_json::Value::Object(event_root);
 
             match serde_json::to_string(&run_params) {
                 Ok(json) => handle_run_agent(sess, ctx, json, event_payload).await,
-                Err(e) => agent_tool_failure(ctx, format!("Failed to encode create arguments: {}", e)),
+                Err(e) => {
+                    agent_tool_failure(ctx, format!("Failed to encode create arguments: {}", e))
+                }
             }
         }
         "status" => {
             let mut status_opts = match req.status.take() {
                 Some(opts) => opts,
                 None => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=status requires a 'status' object",
-                    );
+                    return agent_tool_failure(ctx, "action=status requires a 'status' object");
                 }
             };
             let agent_id = match status_opts.agent_id.take() {
                 Some(id) if !id.trim().is_empty() => id,
                 _ => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=status requires 'status.agent_id'",
-                    );
+                    return agent_tool_failure(ctx, "action=status requires 'status.agent_id'");
                 }
             };
             let batch_id = match status_opts.batch_id.take() {
                 Some(batch) if !batch.trim().is_empty() => batch,
                 _ => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=status requires 'status.batch_id'",
-                    );
+                    return agent_tool_failure(ctx, "action=status requires 'status.batch_id'");
                 }
             };
             let params = CheckAgentStatusParams {
@@ -5621,40 +5858,39 @@ pub(crate) async fn handle_agent_tool(
             status_event.insert("agent_id".to_string(), serde_json::Value::String(agent_id));
             status_event.insert("batch_id".to_string(), serde_json::Value::String(batch_id));
             let mut status_event_root = serde_json::Map::new();
-            status_event_root.insert("action".to_string(), serde_json::Value::String("status".to_string()));
-            status_event_root.insert("status".to_string(), serde_json::Value::Object(status_event));
+            status_event_root.insert(
+                "action".to_string(),
+                serde_json::Value::String("status".to_string()),
+            );
+            status_event_root.insert(
+                "status".to_string(),
+                serde_json::Value::Object(status_event),
+            );
             let status_event_payload = serde_json::Value::Object(status_event_root);
             match serde_json::to_string(&params) {
                 Ok(json) => handle_check_agent_status(sess, ctx, json, status_event_payload).await,
-                Err(e) => agent_tool_failure(ctx, format!("Failed to encode status arguments: {}", e)),
+                Err(e) => {
+                    agent_tool_failure(ctx, format!("Failed to encode status arguments: {}", e))
+                }
             }
         }
         "result" => {
             let mut result_opts = match req.result.take() {
                 Some(opts) => opts,
                 None => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=result requires a 'result' object",
-                    );
+                    return agent_tool_failure(ctx, "action=result requires a 'result' object");
                 }
             };
             let agent_id = match result_opts.agent_id.take() {
                 Some(id) if !id.trim().is_empty() => id,
                 _ => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=result requires 'result.agent_id'",
-                    );
+                    return agent_tool_failure(ctx, "action=result requires 'result.agent_id'");
                 }
             };
             let batch_id = match result_opts.batch_id.take() {
                 Some(batch) if !batch.trim().is_empty() => batch,
                 _ => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=result requires 'result.batch_id'",
-                    );
+                    return agent_tool_failure(ctx, "action=result requires 'result.batch_id'");
                 }
             };
             let params = GetAgentResultParams {
@@ -5665,32 +5901,34 @@ pub(crate) async fn handle_agent_tool(
             result_event.insert("agent_id".to_string(), serde_json::Value::String(agent_id));
             result_event.insert("batch_id".to_string(), serde_json::Value::String(batch_id));
             let mut result_event_root = serde_json::Map::new();
-            result_event_root.insert("action".to_string(), serde_json::Value::String("result".to_string()));
-            result_event_root.insert("result".to_string(), serde_json::Value::Object(result_event));
+            result_event_root.insert(
+                "action".to_string(),
+                serde_json::Value::String("result".to_string()),
+            );
+            result_event_root.insert(
+                "result".to_string(),
+                serde_json::Value::Object(result_event),
+            );
             let result_event_payload = serde_json::Value::Object(result_event_root);
             match serde_json::to_string(&params) {
                 Ok(json) => handle_get_agent_result(sess, ctx, json, result_event_payload).await,
-                Err(e) => agent_tool_failure(ctx, format!("Failed to encode result arguments: {}", e)),
+                Err(e) => {
+                    agent_tool_failure(ctx, format!("Failed to encode result arguments: {}", e))
+                }
             }
         }
         "cancel" => {
             let mut cancel_opts = match req.cancel.take() {
                 Some(opts) => opts,
                 None => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=cancel requires a 'cancel' object",
-                    );
+                    return agent_tool_failure(ctx, "action=cancel requires a 'cancel' object");
                 }
             };
             let cancel_agent_id = cancel_opts.agent_id.clone();
             let cancel_batch_id = match cancel_opts.batch_id.take() {
                 Some(batch) if !batch.trim().is_empty() => batch,
                 _ => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=cancel requires 'cancel.batch_id'",
-                    );
+                    return agent_tool_failure(ctx, "action=cancel requires 'cancel.batch_id'");
                 }
             };
             let params = CancelAgentParams {
@@ -5701,34 +5939,39 @@ pub(crate) async fn handle_agent_tool(
             if let Some(id) = cancel_agent_id {
                 cancel_event.insert("agent_id".to_string(), serde_json::Value::String(id));
             }
-            cancel_event.insert("batch_id".to_string(), serde_json::Value::String(cancel_batch_id));
+            cancel_event.insert(
+                "batch_id".to_string(),
+                serde_json::Value::String(cancel_batch_id),
+            );
             let mut cancel_event_root = serde_json::Map::new();
-            cancel_event_root.insert("action".to_string(), serde_json::Value::String("cancel".to_string()));
-            cancel_event_root.insert("cancel".to_string(), serde_json::Value::Object(cancel_event));
+            cancel_event_root.insert(
+                "action".to_string(),
+                serde_json::Value::String("cancel".to_string()),
+            );
+            cancel_event_root.insert(
+                "cancel".to_string(),
+                serde_json::Value::Object(cancel_event),
+            );
             let cancel_event_payload = serde_json::Value::Object(cancel_event_root);
             match serde_json::to_string(&params) {
                 Ok(json) => handle_cancel_agent(sess, ctx, json, cancel_event_payload).await,
-                Err(e) => agent_tool_failure(ctx, format!("Failed to encode cancel arguments: {}", e)),
+                Err(e) => {
+                    agent_tool_failure(ctx, format!("Failed to encode cancel arguments: {}", e))
+                }
             }
         }
         "wait" => {
             let mut wait_opts = match req.wait.take() {
                 Some(opts) => opts,
                 None => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=wait requires a 'wait' object",
-                    );
+                    return agent_tool_failure(ctx, "action=wait requires a 'wait' object");
                 }
             };
             let wait_agent_id = wait_opts.agent_id.clone();
             let wait_batch_id = match wait_opts.batch_id.take() {
                 Some(batch) if !batch.trim().is_empty() => batch,
                 _ => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=wait requires 'wait.batch_id'",
-                    );
+                    return agent_tool_failure(ctx, "action=wait requires 'wait.batch_id'");
                 }
             };
             let wait_timeout = wait_opts.timeout_seconds;
@@ -5743,40 +5986,48 @@ pub(crate) async fn handle_agent_tool(
             if let Some(id) = wait_agent_id {
                 wait_event.insert("agent_id".to_string(), serde_json::Value::String(id));
             }
-            wait_event.insert("batch_id".to_string(), serde_json::Value::String(wait_batch_id));
+            wait_event.insert(
+                "batch_id".to_string(),
+                serde_json::Value::String(wait_batch_id),
+            );
             if let Some(timeout) = wait_timeout {
-                wait_event.insert("timeout_seconds".to_string(), serde_json::Value::from(timeout));
+                wait_event.insert(
+                    "timeout_seconds".to_string(),
+                    serde_json::Value::from(timeout),
+                );
             }
             if let Some(return_all) = wait_return_all {
-                wait_event.insert("return_all".to_string(), serde_json::Value::Bool(return_all));
+                wait_event.insert(
+                    "return_all".to_string(),
+                    serde_json::Value::Bool(return_all),
+                );
             }
             let mut wait_event_root = serde_json::Map::new();
-            wait_event_root.insert("action".to_string(), serde_json::Value::String("wait".to_string()));
+            wait_event_root.insert(
+                "action".to_string(),
+                serde_json::Value::String("wait".to_string()),
+            );
             wait_event_root.insert("wait".to_string(), serde_json::Value::Object(wait_event));
             let wait_event_payload = serde_json::Value::Object(wait_event_root);
             match serde_json::to_string(&params) {
                 Ok(json) => handle_wait_for_agent(sess, ctx, json, wait_event_payload).await,
-                Err(e) => agent_tool_failure(ctx, format!("Failed to encode wait arguments: {}", e)),
+                Err(e) => {
+                    agent_tool_failure(ctx, format!("Failed to encode wait arguments: {}", e))
+                }
             }
         }
         "list" => {
             let mut list_opts = match req.list.take() {
                 Some(opts) => opts,
                 None => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=list requires a 'list' object",
-                    );
+                    return agent_tool_failure(ctx, "action=list requires a 'list' object");
                 }
             };
             let status_filter = list_opts.status_filter.take();
             let batch_id = match list_opts.batch_id.take() {
                 Some(batch) if !batch.trim().is_empty() => batch,
                 _ => {
-                    return agent_tool_failure(
-                        ctx,
-                        "action=list requires 'list.batch_id'",
-                    );
+                    return agent_tool_failure(ctx, "action=list requires 'list.batch_id'");
                 }
             };
             let recent_only = list_opts.recent_only;
@@ -5788,7 +6039,10 @@ pub(crate) async fn handle_agent_tool(
             let mut list_event = serde_json::Map::new();
             if let Some(ref status) = status_filter {
                 if !status.is_empty() {
-                    list_event.insert("status_filter".to_string(), serde_json::Value::String(status.clone()));
+                    list_event.insert(
+                        "status_filter".to_string(),
+                        serde_json::Value::String(status.clone()),
+                    );
                 }
             }
             list_event.insert("batch_id".to_string(), serde_json::Value::String(batch_id));
@@ -5796,12 +6050,17 @@ pub(crate) async fn handle_agent_tool(
                 list_event.insert("recent_only".to_string(), serde_json::Value::Bool(recent));
             }
             let mut list_event_root = serde_json::Map::new();
-            list_event_root.insert("action".to_string(), serde_json::Value::String("list".to_string()));
+            list_event_root.insert(
+                "action".to_string(),
+                serde_json::Value::String("list".to_string()),
+            );
             list_event_root.insert("list".to_string(), serde_json::Value::Object(list_event));
             let list_event_payload = serde_json::Value::Object(list_event_root);
             match serde_json::to_string(&params) {
                 Ok(json) => handle_list_agents(sess, ctx, json, list_event_payload).await,
-                Err(e) => agent_tool_failure(ctx, format!("Failed to encode list arguments: {}", e)),
+                Err(e) => {
+                    agent_tool_failure(ctx, format!("Failed to encode list arguments: {}", e))
+                }
             }
         }
         other => agent_tool_failure(ctx, format!("Unsupported agent action: {}", other)),
@@ -6241,122 +6500,129 @@ async fn handle_check_agent_status(
         "agent".to_string(),
         Some(event_payload),
         || async move {
-    match serde_json::from_str::<CheckAgentStatusParams>(&arguments_clone) {
-        Ok(params) => {
-            let manager = AGENT_MANAGER.read().await;
-
-            if let Some(agent) = manager.get_agent(&params.agent_id) {
-                match agent.batch_id.as_deref() {
-                    Some(batch) if batch == params.batch_id => {}
-                    _ => {
-                        return ResponseInputItem::FunctionCallOutput {
-                            call_id: call_id_clone,
-                            output: FunctionCallOutputPayload {
-                                content: format!(
-                                    "Agent {} does not belong to batch {}",
-                                    params.agent_id, params.batch_id
-                                ),
-                                success: Some(false),
-                            },
-                        };
-                    }
-                }
-
-                // Limit progress in the response; write full progress to file if large
-                let max_progress_lines = 50usize;
-                let total_progress = agent.progress.len();
-                let progress_preview: Vec<String> = if total_progress > max_progress_lines {
-                    agent
-                        .progress
-                        .iter()
-                        .skip(total_progress - max_progress_lines)
-                        .cloned()
-                        .collect()
-                } else {
-                    agent.progress.clone()
-                };
-
-                let mut progress_file: Option<String> = None;
-                if total_progress > max_progress_lines {
-                    let cwd = sess.get_cwd().to_path_buf();
-                    drop(manager);
-                    let dir = match ensure_agent_dir(&cwd, &agent.id) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            return ResponseInputItem::FunctionCallOutput {
-                                call_id: call_id_clone,
-                                output: FunctionCallOutputPayload {
-                                    content: format!("Failed to prepare agent progress file: {}", e),
-                                    success: Some(false),
-                                },
-                            };
-                        }
-                    };
-                    // Re-acquire manager to get fresh progress after potential delay
+            match serde_json::from_str::<CheckAgentStatusParams>(&arguments_clone) {
+                Ok(params) => {
                     let manager = AGENT_MANAGER.read().await;
+
                     if let Some(agent) = manager.get_agent(&params.agent_id) {
-                        let joined = agent.progress.join("\n");
-                        match write_agent_file(&dir, "progress.log", &joined) {
-                            Ok(p) => progress_file = Some(p.display().to_string()),
-                            Err(e) => {
+                        match agent.batch_id.as_deref() {
+                            Some(batch) if batch == params.batch_id => {}
+                            _ => {
                                 return ResponseInputItem::FunctionCallOutput {
                                     call_id: call_id_clone,
                                     output: FunctionCallOutputPayload {
-                                        content: format!("Failed to write progress file: {}", e),
+                                        content: format!(
+                                            "Agent {} does not belong to batch {}",
+                                            params.agent_id, params.batch_id
+                                        ),
                                         success: Some(false),
                                     },
                                 };
                             }
                         }
+
+                        // Limit progress in the response; write full progress to file if large
+                        let max_progress_lines = 50usize;
+                        let total_progress = agent.progress.len();
+                        let progress_preview: Vec<String> = if total_progress > max_progress_lines {
+                            agent
+                                .progress
+                                .iter()
+                                .skip(total_progress - max_progress_lines)
+                                .cloned()
+                                .collect()
+                        } else {
+                            agent.progress.clone()
+                        };
+
+                        let mut progress_file: Option<String> = None;
+                        if total_progress > max_progress_lines {
+                            let cwd = sess.get_cwd().to_path_buf();
+                            drop(manager);
+                            let dir = match ensure_agent_dir(&cwd, &agent.id) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    return ResponseInputItem::FunctionCallOutput {
+                                        call_id: call_id_clone,
+                                        output: FunctionCallOutputPayload {
+                                            content: format!(
+                                                "Failed to prepare agent progress file: {}",
+                                                e
+                                            ),
+                                            success: Some(false),
+                                        },
+                                    };
+                                }
+                            };
+                            // Re-acquire manager to get fresh progress after potential delay
+                            let manager = AGENT_MANAGER.read().await;
+                            if let Some(agent) = manager.get_agent(&params.agent_id) {
+                                let joined = agent.progress.join("\n");
+                                match write_agent_file(&dir, "progress.log", &joined) {
+                                    Ok(p) => progress_file = Some(p.display().to_string()),
+                                    Err(e) => {
+                                        return ResponseInputItem::FunctionCallOutput {
+                                            call_id: call_id_clone,
+                                            output: FunctionCallOutputPayload {
+                                                content: format!(
+                                                    "Failed to write progress file: {}",
+                                                    e
+                                                ),
+                                                success: Some(false),
+                                            },
+                                        };
+                                    }
+                                }
+                            }
+                        } else {
+                            drop(manager);
+                        }
+
+                        let response = serde_json::json!({
+                            "agent_id": params.agent_id,
+                            "name": agent.name,
+                            "status": agent.status,
+                            "model": agent.model,
+                            "batch_id": agent.batch_id,
+                            "created_at": agent.created_at,
+                            "started_at": agent.started_at,
+                            "completed_at": agent.completed_at,
+                            "progress_preview": progress_preview,
+                            "progress_total": total_progress,
+                            "progress_file": progress_file,
+                            "error": agent.error,
+                            "worktree_path": agent.worktree_path,
+                            "branch_name": agent.branch_name,
+                        });
+
+                        ResponseInputItem::FunctionCallOutput {
+                            call_id: call_id_clone,
+                            output: FunctionCallOutputPayload {
+                                content: response.to_string(),
+                                success: Some(true),
+                            },
+                        }
+                    } else {
+                        ResponseInputItem::FunctionCallOutput {
+                            call_id: call_id_clone,
+                            output: FunctionCallOutputPayload {
+                                content: format!("Agent not found: {}", params.agent_id),
+                                success: Some(false),
+                            },
+                        }
                     }
-                } else {
-                    drop(manager);
                 }
-
-                let response = serde_json::json!({
-                    "agent_id": params.agent_id,
-                    "name": agent.name,
-                    "status": agent.status,
-                    "model": agent.model,
-                    "batch_id": agent.batch_id,
-                    "created_at": agent.created_at,
-                    "started_at": agent.started_at,
-                    "completed_at": agent.completed_at,
-                    "progress_preview": progress_preview,
-                    "progress_total": total_progress,
-                    "progress_file": progress_file,
-                    "error": agent.error,
-                    "worktree_path": agent.worktree_path,
-                    "branch_name": agent.branch_name,
-                });
-
-                ResponseInputItem::FunctionCallOutput {
+                Err(e) => ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
                     output: FunctionCallOutputPayload {
-                        content: response.to_string(),
-                        success: Some(true),
+                        content: format!("Invalid agent arguments for action=status: {}", e),
+                        success: None,
                     },
-                }
-            } else {
-                ResponseInputItem::FunctionCallOutput {
-                    call_id: call_id_clone,
-                    output: FunctionCallOutputPayload {
-                        content: format!("Agent not found: {}", params.agent_id),
-                        success: Some(false),
-                    },
-                }
+                },
             }
-        }
-        Err(e) => ResponseInputItem::FunctionCallOutput {
-            call_id: call_id_clone,
-            output: FunctionCallOutputPayload {
-                content: format!("Invalid agent arguments for action=status: {}", e),
-                success: None,
-            },
         },
-    }
-        },
-    ).await
+    )
+    .await
 }
 
 async fn handle_get_agent_result(
@@ -6373,119 +6639,128 @@ async fn handle_get_agent_result(
         "agent".to_string(),
         Some(event_payload),
         || async move {
-    match serde_json::from_str::<GetAgentResultParams>(&arguments_clone) {
-        Ok(params) => {
-            let manager = AGENT_MANAGER.read().await;
+            match serde_json::from_str::<GetAgentResultParams>(&arguments_clone) {
+                Ok(params) => {
+                    let manager = AGENT_MANAGER.read().await;
 
-            if let Some(agent) = manager.get_agent(&params.agent_id) {
-                match agent.batch_id.as_deref() {
-                    Some(batch) if batch == params.batch_id => {}
-                    _ => {
-                        return ResponseInputItem::FunctionCallOutput {
-                            call_id: call_id_clone,
-                            output: FunctionCallOutputPayload {
-                                content: format!(
-                                    "Agent {} does not belong to batch {}",
-                                    params.agent_id, params.batch_id
-                                ),
-                                success: Some(false),
-                            },
+                    if let Some(agent) = manager.get_agent(&params.agent_id) {
+                        match agent.batch_id.as_deref() {
+                            Some(batch) if batch == params.batch_id => {}
+                            _ => {
+                                return ResponseInputItem::FunctionCallOutput {
+                                    call_id: call_id_clone,
+                                    output: FunctionCallOutputPayload {
+                                        content: format!(
+                                            "Agent {} does not belong to batch {}",
+                                            params.agent_id, params.batch_id
+                                        ),
+                                        success: Some(false),
+                                    },
+                                };
+                            }
+                        }
+                        let cwd = sess.get_cwd().to_path_buf();
+                        let dir = match ensure_agent_dir(&cwd, &params.agent_id) {
+                            Ok(d) => d,
+                            Err(e) => {
+                                return ResponseInputItem::FunctionCallOutput {
+                                    call_id: call_id_clone,
+                                    output: FunctionCallOutputPayload {
+                                        content: format!(
+                                            "Failed to prepare agent output dir: {}",
+                                            e
+                                        ),
+                                        success: Some(false),
+                                    },
+                                };
+                            }
                         };
-                    }
-                }
-                let cwd = sess.get_cwd().to_path_buf();
-                let dir = match ensure_agent_dir(&cwd, &params.agent_id) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        return ResponseInputItem::FunctionCallOutput {
-                            call_id: call_id_clone,
-                            output: FunctionCallOutputPayload {
-                                content: format!("Failed to prepare agent output dir: {}", e),
-                                success: Some(false),
-                            },
-                        };
-                    }
-                };
 
-                match agent.status {
-                    AgentStatus::Completed => {
-                        let output_text = agent.result.unwrap_or_default();
-                        let (preview, total_lines) = preview_first_n_lines(&output_text, 500);
-                        let file_path = match write_agent_file(&dir, "result.txt", &output_text) {
-                            Ok(p) => p.display().to_string(),
-                            Err(e) => format!("Failed to write result file: {}", e),
-                        };
-                        let response = serde_json::json!({
-                            "agent_id": params.agent_id,
-                            "batch_id": params.batch_id.clone(),
-                            "status": agent.status,
-                            "output_preview": preview,
-                            "output_total_lines": total_lines,
-                            "output_file": file_path,
-                        });
+                        match agent.status {
+                            AgentStatus::Completed => {
+                                let output_text = agent.result.unwrap_or_default();
+                                let (preview, total_lines) =
+                                    preview_first_n_lines(&output_text, 500);
+                                let file_path =
+                                    match write_agent_file(&dir, "result.txt", &output_text) {
+                                        Ok(p) => p.display().to_string(),
+                                        Err(e) => format!("Failed to write result file: {}", e),
+                                    };
+                                let response = serde_json::json!({
+                                    "agent_id": params.agent_id,
+                                    "batch_id": params.batch_id.clone(),
+                                    "status": agent.status,
+                                    "output_preview": preview,
+                                    "output_total_lines": total_lines,
+                                    "output_file": file_path,
+                                });
+                                ResponseInputItem::FunctionCallOutput {
+                                    call_id: call_id_clone,
+                                    output: FunctionCallOutputPayload {
+                                        content: response.to_string(),
+                                        success: Some(true),
+                                    },
+                                }
+                            }
+                            AgentStatus::Failed => {
+                                let error_text =
+                                    agent.error.unwrap_or_else(|| "Unknown error".to_string());
+                                let (preview, total_lines) =
+                                    preview_first_n_lines(&error_text, 500);
+                                let file_path =
+                                    match write_agent_file(&dir, "error.txt", &error_text) {
+                                        Ok(p) => p.display().to_string(),
+                                        Err(e) => format!("Failed to write error file: {}", e),
+                                    };
+                                let response = serde_json::json!({
+                                    "agent_id": params.agent_id,
+                                    "batch_id": params.batch_id.clone(),
+                                    "status": agent.status,
+                                    "error_preview": preview,
+                                    "error_total_lines": total_lines,
+                                    "error_file": file_path,
+                                });
+                                ResponseInputItem::FunctionCallOutput {
+                                    call_id: call_id_clone,
+                                    output: FunctionCallOutputPayload {
+                                        content: response.to_string(),
+                                        success: Some(false),
+                                    },
+                                }
+                            }
+                            _ => ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone,
+                                output: FunctionCallOutputPayload {
+                                    content: format!(
+                                        "Agent is still {}: cannot get result yet",
+                                        serde_json::to_string(&agent.status)
+                                            .unwrap_or_else(|_| "running".to_string())
+                                    ),
+                                    success: Some(false),
+                                },
+                            },
+                        }
+                    } else {
                         ResponseInputItem::FunctionCallOutput {
                             call_id: call_id_clone,
                             output: FunctionCallOutputPayload {
-                                content: response.to_string(),
-                                success: Some(true),
-                            },
-                        }
-                    }
-                    AgentStatus::Failed => {
-                        let error_text = agent.error.unwrap_or_else(|| "Unknown error".to_string());
-                        let (preview, total_lines) = preview_first_n_lines(&error_text, 500);
-                        let file_path = match write_agent_file(&dir, "error.txt", &error_text) {
-                            Ok(p) => p.display().to_string(),
-                            Err(e) => format!("Failed to write error file: {}", e),
-                        };
-                        let response = serde_json::json!({
-                            "agent_id": params.agent_id,
-                            "batch_id": params.batch_id.clone(),
-                            "status": agent.status,
-                            "error_preview": preview,
-                            "error_total_lines": total_lines,
-                            "error_file": file_path,
-                        });
-                        ResponseInputItem::FunctionCallOutput {
-                            call_id: call_id_clone,
-                            output: FunctionCallOutputPayload {
-                                content: response.to_string(),
+                                content: format!("Agent not found: {}", params.agent_id),
                                 success: Some(false),
                             },
                         }
                     }
-                    _ => ResponseInputItem::FunctionCallOutput {
-                        call_id: call_id_clone,
-                        output: FunctionCallOutputPayload {
-                            content: format!(
-                                "Agent is still {}: cannot get result yet",
-                                serde_json::to_string(&agent.status)
-                                    .unwrap_or_else(|_| "running".to_string())
-                            ),
-                            success: Some(false),
-                        },
-                    },
                 }
-            } else {
-                ResponseInputItem::FunctionCallOutput {
+                Err(e) => ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
                     output: FunctionCallOutputPayload {
-                        content: format!("Agent not found: {}", params.agent_id),
-                        success: Some(false),
+                        content: format!("Invalid agent arguments for action=result: {}", e),
+                        success: None,
                     },
-                }
+                },
             }
-        }
-        Err(e) => ResponseInputItem::FunctionCallOutput {
-            call_id: call_id_clone,
-            output: FunctionCallOutputPayload {
-                content: format!("Invalid agent arguments for action=result: {}", e),
-                success: None,
-            },
         },
-    }
-        },
-    ).await
+    )
+    .await
 }
 
 async fn handle_cancel_agent(
@@ -6502,83 +6777,88 @@ async fn handle_cancel_agent(
         "agent".to_string(),
         Some(event_payload),
         || async move {
-    match serde_json::from_str::<CancelAgentParams>(&arguments_clone) {
-        Ok(params) => {
-            let mut manager = AGENT_MANAGER.write().await;
+            match serde_json::from_str::<CancelAgentParams>(&arguments_clone) {
+                Ok(params) => {
+                    let mut manager = AGENT_MANAGER.write().await;
 
-            if let Some(agent_id) = params.agent_id {
-                let batch_id = match params.batch_id.as_ref() {
-                    Some(batch) => batch,
-                    None => {
-                        return ResponseInputItem::FunctionCallOutput {
-                            call_id: call_id_clone,
-                            output: FunctionCallOutputPayload {
-                                content: "action=cancel requires 'cancel.batch_id'".to_string(),
-                                success: Some(false),
-                            },
+                    if let Some(agent_id) = params.agent_id {
+                        let batch_id = match params.batch_id.as_ref() {
+                            Some(batch) => batch,
+                            None => {
+                                return ResponseInputItem::FunctionCallOutput {
+                                    call_id: call_id_clone,
+                                    output: FunctionCallOutputPayload {
+                                        content: "action=cancel requires 'cancel.batch_id'"
+                                            .to_string(),
+                                        success: Some(false),
+                                    },
+                                };
+                            }
                         };
-                    }
-                };
-                if let Some(agent) = manager.get_agent(&agent_id) {
-                    if agent.batch_id.as_deref() != Some(batch_id.as_str()) {
-                        return ResponseInputItem::FunctionCallOutput {
+                        if let Some(agent) = manager.get_agent(&agent_id) {
+                            if agent.batch_id.as_deref() != Some(batch_id.as_str()) {
+                                return ResponseInputItem::FunctionCallOutput {
+                                    call_id: call_id_clone,
+                                    output: FunctionCallOutputPayload {
+                                        content: format!(
+                                            "Agent {} does not belong to batch {}",
+                                            agent_id, batch_id
+                                        ),
+                                        success: Some(false),
+                                    },
+                                };
+                            }
+                        }
+                        if manager.cancel_agent(&agent_id).await {
+                            ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone,
+                                output: FunctionCallOutputPayload {
+                                    content: format!("Agent {} cancelled", agent_id),
+                                    success: Some(true),
+                                },
+                            }
+                        } else {
+                            ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone,
+                                output: FunctionCallOutputPayload {
+                                    content: format!("Failed to cancel agent {}", agent_id),
+                                    success: Some(false),
+                                },
+                            }
+                        }
+                    } else if let Some(batch_id) = params.batch_id {
+                        let count = manager.cancel_batch(&batch_id).await;
+                        ResponseInputItem::FunctionCallOutput {
                             call_id: call_id_clone,
                             output: FunctionCallOutputPayload {
                                 content: format!(
-                                    "Agent {} does not belong to batch {}",
-                                    agent_id, batch_id
+                                    "Cancelled {} agents in batch {}",
+                                    count, batch_id
                                 ),
+                                success: Some(true),
+                            },
+                        }
+                    } else {
+                        ResponseInputItem::FunctionCallOutput {
+                            call_id: call_id_clone,
+                            output: FunctionCallOutputPayload {
+                                content: "Either agent_id or batch_id must be provided".to_string(),
                                 success: Some(false),
                             },
-                        };
+                        }
                     }
                 }
-                if manager.cancel_agent(&agent_id).await {
-                    ResponseInputItem::FunctionCallOutput {
-                        call_id: call_id_clone,
-                        output: FunctionCallOutputPayload {
-                            content: format!("Agent {} cancelled", agent_id),
-                            success: Some(true),
-                        },
-                    }
-                } else {
-                    ResponseInputItem::FunctionCallOutput {
-                        call_id: call_id_clone,
-                        output: FunctionCallOutputPayload {
-                            content: format!("Failed to cancel agent {}", agent_id),
-                            success: Some(false),
-                        },
-                    }
-                }
-            } else if let Some(batch_id) = params.batch_id {
-                let count = manager.cancel_batch(&batch_id).await;
-                ResponseInputItem::FunctionCallOutput {
+                Err(e) => ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
                     output: FunctionCallOutputPayload {
-                        content: format!("Cancelled {} agents in batch {}", count, batch_id),
-                        success: Some(true),
+                        content: format!("Invalid agent arguments for action=cancel: {}", e),
+                        success: None,
                     },
-                }
-            } else {
-                ResponseInputItem::FunctionCallOutput {
-                    call_id: call_id_clone,
-                    output: FunctionCallOutputPayload {
-                        content: "Either agent_id or batch_id must be provided".to_string(),
-                        success: Some(false),
-                    },
-                }
+                },
             }
-        }
-        Err(e) => ResponseInputItem::FunctionCallOutput {
-            call_id: call_id_clone,
-            output: FunctionCallOutputPayload {
-                content: format!("Invalid agent arguments for action=cancel: {}", e),
-                success: None,
-            },
         },
-    }
-        },
-    ).await
+    )
+    .await
 }
 
 async fn handle_wait_for_agent(
@@ -7005,123 +7285,126 @@ async fn handle_list_agents(
         "agent".to_string(),
         Some(event_payload),
         || async move {
-    match serde_json::from_str::<ListAgentsParams>(&arguments_clone) {
-        Ok(params) => {
-            let manager = AGENT_MANAGER.read().await;
+            match serde_json::from_str::<ListAgentsParams>(&arguments_clone) {
+                Ok(params) => {
+                    let manager = AGENT_MANAGER.read().await;
 
-            let batch_id = match params.batch_id.clone() {
-                Some(batch) if !batch.trim().is_empty() => batch,
-                _ => {
-                    return ResponseInputItem::FunctionCallOutput {
-                        call_id: call_id_clone,
-                        output: FunctionCallOutputPayload {
-                            content: "action=list requires 'list.batch_id'".to_string(),
-                            success: Some(false),
-                        },
+                    let batch_id = match params.batch_id.clone() {
+                        Some(batch) if !batch.trim().is_empty() => batch,
+                        _ => {
+                            return ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone,
+                                output: FunctionCallOutputPayload {
+                                    content: "action=list requires 'list.batch_id'".to_string(),
+                                    success: Some(false),
+                                },
+                            };
+                        }
                     };
-                }
-            };
 
-            let status_filter =
-                params
-                    .status_filter
-                    .and_then(|s| match s.to_lowercase().as_str() {
-                        "pending" => Some(AgentStatus::Pending),
-                        "running" => Some(AgentStatus::Running),
-                        "completed" => Some(AgentStatus::Completed),
-                        "failed" => Some(AgentStatus::Failed),
-                        "cancelled" => Some(AgentStatus::Cancelled),
-                        _ => None,
+                    let status_filter =
+                        params
+                            .status_filter
+                            .and_then(|s| match s.to_lowercase().as_str() {
+                                "pending" => Some(AgentStatus::Pending),
+                                "running" => Some(AgentStatus::Running),
+                                "completed" => Some(AgentStatus::Completed),
+                                "failed" => Some(AgentStatus::Failed),
+                                "cancelled" => Some(AgentStatus::Cancelled),
+                                _ => None,
+                            });
+
+                    let agents = manager.list_agents(
+                        status_filter,
+                        Some(batch_id.clone()),
+                        params.recent_only.unwrap_or(false),
+                    );
+
+                    // Count running agents for status update
+                    let running_count = agents
+                        .iter()
+                        .filter(|a| a.status == AgentStatus::Running)
+                        .count();
+                    if running_count > 0 {
+                        let status_msg = format!(
+                            "🤖 {} agent{} currently running",
+                            running_count,
+                            if running_count != 1 { "s" } else { "" }
+                        );
+                        let event = sess.make_event(
+                            "agent-status",
+                            EventMsg::BackgroundEvent(BackgroundEventEvent {
+                                message: status_msg,
+                            }),
+                        );
+                        let _ = sess.tx_event.send(event).await;
+                    }
+
+                    // Add status counts to summary
+                    let pending_count = agents
+                        .iter()
+                        .filter(|a| a.status == AgentStatus::Pending)
+                        .count();
+                    let running_count = agents
+                        .iter()
+                        .filter(|a| a.status == AgentStatus::Running)
+                        .count();
+                    let completed_count = agents
+                        .iter()
+                        .filter(|a| a.status == AgentStatus::Completed)
+                        .count();
+                    let failed_count = agents
+                        .iter()
+                        .filter(|a| a.status == AgentStatus::Failed)
+                        .count();
+                    let cancelled_count = agents
+                        .iter()
+                        .filter(|a| a.status == AgentStatus::Cancelled)
+                        .count();
+
+                    let summary = serde_json::json!({
+                        "total_agents": agents.len(),
+                        "status_counts": {
+                            "pending": pending_count,
+                            "running": running_count,
+                            "completed": completed_count,
+                            "failed": failed_count,
+                            "cancelled": cancelled_count,
+                        },
+                        "batch_id": batch_id,
+                        "agents": agents.iter().map(|t| {
+                            serde_json::json!({
+                                "id": t.id,
+                                "name": t.name.clone(),
+                                "model": t.model,
+                                "status": t.status,
+                                "created_at": t.created_at,
+                                "batch_id": t.batch_id,
+                                "worktree_path": t.worktree_path,
+                                "branch_name": t.branch_name,
+                            })
+                        }).collect::<Vec<_>>(),
                     });
 
-            let agents = manager.list_agents(
-                status_filter,
-                Some(batch_id.clone()),
-                params.recent_only.unwrap_or(false),
-            );
-
-            // Count running agents for status update
-            let running_count = agents
-                .iter()
-                .filter(|a| a.status == AgentStatus::Running)
-                .count();
-            if running_count > 0 {
-                let status_msg = format!(
-                    "🤖 {} agent{} currently running",
-                    running_count,
-                    if running_count != 1 { "s" } else { "" }
-                );
-                let event = sess.make_event(
-                    "agent-status",
-                    EventMsg::BackgroundEvent(BackgroundEventEvent { message: status_msg }),
-                );
-                let _ = sess.tx_event.send(event).await;
-            }
-
-            // Add status counts to summary
-            let pending_count = agents
-                .iter()
-                .filter(|a| a.status == AgentStatus::Pending)
-                .count();
-            let running_count = agents
-                .iter()
-                .filter(|a| a.status == AgentStatus::Running)
-                .count();
-            let completed_count = agents
-                .iter()
-                .filter(|a| a.status == AgentStatus::Completed)
-                .count();
-            let failed_count = agents
-                .iter()
-                .filter(|a| a.status == AgentStatus::Failed)
-                .count();
-            let cancelled_count = agents
-                .iter()
-                .filter(|a| a.status == AgentStatus::Cancelled)
-                .count();
-
-            let summary = serde_json::json!({
-                "total_agents": agents.len(),
-                "status_counts": {
-                    "pending": pending_count,
-                    "running": running_count,
-                    "completed": completed_count,
-                    "failed": failed_count,
-                    "cancelled": cancelled_count,
-                },
-                "batch_id": batch_id,
-                "agents": agents.iter().map(|t| {
-                    serde_json::json!({
-                        "id": t.id,
-                        "name": t.name.clone(),
-                        "model": t.model,
-                        "status": t.status,
-                        "created_at": t.created_at,
-                        "batch_id": t.batch_id,
-                        "worktree_path": t.worktree_path,
-                        "branch_name": t.branch_name,
-                    })
-                }).collect::<Vec<_>>(),
-            });
-
-            ResponseInputItem::FunctionCallOutput {
-                call_id: call_id_clone,
-                output: FunctionCallOutputPayload {
-                    content: summary.to_string(),
-                    success: Some(true),
+                    ResponseInputItem::FunctionCallOutput {
+                        call_id: call_id_clone,
+                        output: FunctionCallOutputPayload {
+                            content: summary.to_string(),
+                            success: Some(true),
+                        },
+                    }
+                }
+                Err(e) => ResponseInputItem::FunctionCallOutput {
+                    call_id: call_id_clone,
+                    output: FunctionCallOutputPayload {
+                        content: format!("Invalid agent arguments for action=list: {}", e),
+                        success: None,
+                    },
                 },
             }
-        }
-        Err(e) => ResponseInputItem::FunctionCallOutput {
-            call_id: call_id_clone,
-            output: FunctionCallOutputPayload {
-                content: format!("Invalid agent arguments for action=list: {}", e),
-                success: None,
-            },
         },
-    }
-        },
-    ).await
+    )
+    .await
 }
 
 async fn handle_container_exec_with_params(
@@ -7197,59 +7480,106 @@ async fn handle_container_exec_with_params(
             // Further split on conditional operators while keeping order.
             for part in chunk.split(|c| matches!(c, '|' | '&')) {
                 let s = part.trim();
-                if s.is_empty() { continue; }
+                if s.is_empty() {
+                    continue;
+                }
                 // Tokenize on whitespace, skip wrappers and git globals to find the real subcommand.
                 let raw_tokens: Vec<&str> = s.split_whitespace().collect();
-                if raw_tokens.is_empty() { continue; }
-                fn strip_tok(t: &str) -> &str { t.trim_matches(|c| matches!(c, '(' | ')' | '{' | '}' | '\'' | '"')) }
+                if raw_tokens.is_empty() {
+                    continue;
+                }
+                fn strip_tok(t: &str) -> &str {
+                    t.trim_matches(|c| matches!(c, '(' | ')' | '{' | '}' | '\'' | '"'))
+                }
                 let mut i = 0usize;
                 // Skip env assignments and lightweight wrappers/keywords.
                 loop {
-                    if i >= raw_tokens.len() { break; }
+                    if i >= raw_tokens.len() {
+                        break;
+                    }
                     let tok = strip_tok(raw_tokens[i]);
-                    if tok.is_empty() { i += 1; continue; }
+                    if tok.is_empty() {
+                        i += 1;
+                        continue;
+                    }
                     // Skip KEY=val assignments.
                     if tok.contains('=') && !tok.starts_with('=') && !tok.starts_with('-') {
-                        i += 1; continue;
+                        i += 1;
+                        continue;
                     }
                     // Skip simple wrappers and control keywords.
-                    if matches!(tok, "env" | "sudo" | "command" | "time" | "nohup" | "nice" | "then" | "do" | "{" | "(") {
+                    if matches!(
+                        tok,
+                        "env"
+                            | "sudo"
+                            | "command"
+                            | "time"
+                            | "nohup"
+                            | "nice"
+                            | "then"
+                            | "do"
+                            | "{"
+                            | "("
+                    ) {
                         // Best-effort: skip immediate option-like flags after some wrappers.
                         i += 1;
                         while i < raw_tokens.len() {
                             let peek = strip_tok(raw_tokens[i]);
-                            if peek.starts_with('-') { i += 1; } else { break; }
+                            if peek.starts_with('-') {
+                                i += 1;
+                            } else {
+                                break;
+                            }
                         }
                         continue;
                     }
                     break;
                 }
-                if i >= raw_tokens.len() { continue; }
+                if i >= raw_tokens.len() {
+                    continue;
+                }
                 let cmd = strip_tok(raw_tokens[i]);
                 let is_git = cmd.ends_with("/git") || cmd == "git";
-                if !is_git { continue; }
+                if !is_git {
+                    continue;
+                }
                 i += 1; // advance past git
                 // Skip git global options to find the real subcommand.
                 while i < raw_tokens.len() {
                     let t = strip_tok(raw_tokens[i]);
-                    if t.is_empty() { i += 1; continue; }
-                    if matches!(t, "-C" | "--git-dir" | "--work-tree" | "-c") {
-                        i += 1; // skip option key
-                        if i < raw_tokens.len() { i += 1; } // skip its value
+                    if t.is_empty() {
+                        i += 1;
                         continue;
                     }
-                    if t.starts_with("--git-dir=") || t.starts_with("--work-tree=") || t.starts_with("-c") {
-                        i += 1; continue;
+                    if matches!(t, "-C" | "--git-dir" | "--work-tree" | "-c") {
+                        i += 1; // skip option key
+                        if i < raw_tokens.len() {
+                            i += 1;
+                        } // skip its value
+                        continue;
                     }
-                    if t.starts_with('-') { i += 1; continue; }
+                    if t.starts_with("--git-dir=")
+                        || t.starts_with("--work-tree=")
+                        || t.starts_with("-c")
+                    {
+                        i += 1;
+                        continue;
+                    }
+                    if t.starts_with('-') {
+                        i += 1;
+                        continue;
+                    }
                     break;
                 }
-                if i >= raw_tokens.len() { continue; }
+                if i >= raw_tokens.len() {
+                    continue;
+                }
                 let sub = strip_tok(raw_tokens[i]);
                 i += 1;
                 match sub {
                     "checkout" => {
-                        let args: Vec<&str> = raw_tokens[i..].iter().map(|t| strip_tok(t)).collect();
+                        let args: Vec<&str> =
+                            raw_tokens[i..].iter().map(|t| strip_tok(t)).collect();
                         let has_path_delimiter = args.iter().any(|a| *a == "--");
                         if has_path_delimiter {
                             return Some(SensitiveGitKind::PathCheckout);
@@ -7263,7 +7593,9 @@ async fn handle_container_exec_with_params(
                                 break;
                             }
                         }
-                        if saw_branch_change_flag { return Some(SensitiveGitKind::BranchChange); }
+                        if saw_branch_change_flag {
+                            return Some(SensitiveGitKind::BranchChange);
+                        }
 
                         // `git checkout -` switches to previous branch.
                         if args.first().copied() == Some("-") {
@@ -7285,13 +7617,23 @@ async fn handle_container_exec_with_params(
                         let mut first_non_flag: Option<&str> = None;
                         for a in &raw_tokens[i..] {
                             let a = strip_tok(a);
-                            if a == "-c" { saw_c = true; break; }
-                            if a == "--detach" { saw_detach = true; break; }
-                            if a.starts_with('-') { continue; }
+                            if a == "-c" {
+                                saw_c = true;
+                                break;
+                            }
+                            if a == "--detach" {
+                                saw_detach = true;
+                                break;
+                            }
+                            if a.starts_with('-') {
+                                continue;
+                            }
                             first_non_flag = Some(a);
                             break;
                         }
-                        if saw_c || saw_detach || first_non_flag.is_some() { return Some(SensitiveGitKind::BranchChange); }
+                        if saw_c || saw_detach || first_non_flag.is_some() {
+                            return Some(SensitiveGitKind::BranchChange);
+                        }
                     }
                     "reset" => {
                         // Any form of git reset is considered sensitive.
@@ -7335,31 +7677,28 @@ async fn handle_container_exec_with_params(
         false
     }
 
-    fn guidance_for_sensitive_git(kind: SensitiveGitKind, original_label: &str, original_value: &str, suggested: &str) -> String {
+    fn guidance_for_sensitive_git(
+        kind: SensitiveGitKind,
+        original_label: &str,
+        original_value: &str,
+        suggested: &str,
+    ) -> String {
         match kind {
             SensitiveGitKind::BranchChange => format!(
                 "Blocked git checkout/switch on a branch. Switching branches can discard or hide in-progress changes. Only continue if the user explicitly requested this branch change. Resend with 'confirm:' if you intend to proceed.\n\n{}: {}\nresend_exact_argv: {}",
-                original_label,
-                original_value,
-                suggested
+                original_label, original_value, suggested
             ),
             SensitiveGitKind::PathCheckout => format!(
                 "Blocked git checkout -- <paths>. This command overwrites local modifications to the specified files. Consider backing up the files first. If you intentionally want to discard those edits, resend the exact command prefixed with 'confirm:'.\n\n{}: {}\nresend_exact_argv: {}",
-                original_label,
-                original_value,
-                suggested
+                original_label, original_value, suggested
             ),
             SensitiveGitKind::Reset => format!(
                 "Blocked git reset. Reset rewrites the working tree/index and may delete local work. Consider backing up the files first. If backups exist and this was explicitly requested, resend prefixed with 'confirm:'.\n\n{}: {}\nresend_exact_argv: {}",
-                original_label,
-                original_value,
-                suggested
+                original_label, original_value, suggested
             ),
             SensitiveGitKind::Revert => format!(
                 "Blocked git revert. Reverting commits alters history and should only happen when the user asks for it. If that’s the case, resend the command with 'confirm:'.\n\n{}: {}\nresend_exact_argv: {}",
-                original_label,
-                original_value,
-                suggested
+                original_label, original_value, suggested
             ),
         }
     }
@@ -7372,9 +7711,9 @@ async fn handle_container_exec_with_params(
     ) -> String {
         let suggested_confirm = serde_json::to_string(&resend_exact_argv)
             .unwrap_or_else(|_| "<failed to serialize suggested argv>".to_string());
-        let suggested_dry_run = analysis
-            .suggested_dry_run()
-            .unwrap_or_else(|| "<no canonical dry-run variant; remove mutating flags or use confirm:>".to_string());
+        let suggested_dry_run = analysis.suggested_dry_run().unwrap_or_else(|| {
+            "<no canonical dry-run variant; remove mutating flags or use confirm:>".to_string()
+        });
         format!(
             "Blocked {} without a prior dry run. Run the dry-run variant first or resend with 'confirm:' if explicitly requested.\n\n{}: {}\nresend_exact_argv: {}\nsuggested_dry_run: {}",
             analysis.display_name(),
@@ -7385,7 +7724,6 @@ async fn handle_container_exec_with_params(
         )
     }
 
-
     // If the argv is a shell wrapper, analyze and optionally strip `confirm:`.
     let mut params = params;
     let seq_hint_for_exec = seq_hint;
@@ -7394,9 +7732,7 @@ async fn handle_container_exec_with_params(
     if let Some((script_index, script)) = extract_shell_script_from_wrapper(&params.command) {
         let trimmed = script.trim_start();
         let confirm_prefixes = ["confirm:", "CONFIRM:"];
-        let has_confirm_prefix = confirm_prefixes
-            .iter()
-            .any(|p| trimmed.starts_with(p));
+        let has_confirm_prefix = confirm_prefixes.iter().any(|p| trimmed.starts_with(p));
 
         // If no confirm prefix and it looks like a sensitive git command, reject with guidance.
         if !has_confirm_prefix {
@@ -7412,17 +7748,19 @@ async fn handle_container_exec_with_params(
                 let guidance = pattern.guidance("original_script", &script, &suggested);
 
                 let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-                sess
-                    .notify_background_event_with_order(
-                        &sub_id,
-                        order,
-                        format!("Command guard: {}", guidance),
-                    )
-                    .await;
+                sess.notify_background_event_with_order(
+                    &sub_id,
+                    order,
+                    format!("Command guard: {}", guidance),
+                )
+                .await;
 
                 return ResponseInputItem::FunctionCallOutput {
                     call_id,
-                    output: FunctionCallOutputPayload { content: guidance, success: None },
+                    output: FunctionCallOutputPayload {
+                        content: guidance,
+                        success: None,
+                    },
                 };
             }
 
@@ -7433,20 +7771,23 @@ async fn handle_container_exec_with_params(
                 let suggested = serde_json::to_string(&argv_confirm)
                     .unwrap_or_else(|_| "<failed to serialize suggested argv>".to_string());
 
-                let guidance = guidance_for_sensitive_git(kind, "original_script", &script, &suggested);
+                let guidance =
+                    guidance_for_sensitive_git(kind, "original_script", &script, &suggested);
 
                 let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-                sess
-                    .notify_background_event_with_order(
-                        &sub_id,
-                        order,
-                        format!("Command guard: {}", guidance.clone()),
-                    )
-                    .await;
+                sess.notify_background_event_with_order(
+                    &sub_id,
+                    order,
+                    format!("Command guard: {}", guidance.clone()),
+                )
+                .await;
 
                 return ResponseInputItem::FunctionCallOutput {
                     call_id,
-                    output: FunctionCallOutputPayload { content: guidance, success: None },
+                    output: FunctionCallOutputPayload {
+                        content: guidance,
+                        success: None,
+                    },
                 };
             }
         }
@@ -7473,7 +7814,8 @@ async fn handle_container_exec_with_params(
                     };
                     if needs_dry_run {
                         let mut argv_confirm = params.command.clone();
-                        argv_confirm[script_index] = format!("confirm: {}", params.command[script_index].trim_start());
+                        argv_confirm[script_index] =
+                            format!("confirm: {}", params.command[script_index].trim_start());
                         let guidance = guidance_for_dry_run_guard(
                             analysis,
                             "original_script",
@@ -7482,17 +7824,19 @@ async fn handle_container_exec_with_params(
                         );
 
                         let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-                        sess
-                            .notify_background_event_with_order(
-                                &sub_id,
-                                order,
-                                format!("Command guard: {}", guidance.clone()),
-                            )
-                            .await;
+                        sess.notify_background_event_with_order(
+                            &sub_id,
+                            order,
+                            format!("Command guard: {}", guidance.clone()),
+                        )
+                        .await;
 
                         return ResponseInputItem::FunctionCallOutput {
                             call_id,
-                            output: FunctionCallOutputPayload { content: guidance, success: None },
+                            output: FunctionCallOutputPayload {
+                                content: guidance,
+                                success: None,
+                            },
                         };
                     }
                 }
@@ -7505,13 +7849,12 @@ async fn handle_container_exec_with_params(
     if let Some(redundant) = detect_redundant_cd(&params.command, &params.cwd) {
         let guidance = guidance_for_redundant_cd(&redundant);
         let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-        sess
-            .notify_background_event_with_order(
-                &sub_id,
-                order,
-                format!("Command guard: {}", guidance.clone()),
-            )
-            .await;
+        sess.notify_background_event_with_order(
+            &sub_id,
+            order,
+            format!("Command guard: {}", guidance.clone()),
+        )
+        .await;
 
         return ResponseInputItem::FunctionCallOutput {
             call_id,
@@ -7525,13 +7868,12 @@ async fn handle_container_exec_with_params(
     if let Some(cat_guard) = detect_cat_write(&params.command) {
         let guidance = guidance_for_cat_write(&cat_guard);
         let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-        sess
-            .notify_background_event_with_order(
-                &sub_id,
-                order,
-                format!("Command guard: {}", guidance.clone()),
-            )
-            .await;
+        sess.notify_background_event_with_order(
+            &sub_id,
+            order,
+            format!("Command guard: {}", guidance.clone()),
+        )
+        .await;
 
         return ResponseInputItem::FunctionCallOutput {
             call_id,
@@ -7545,13 +7887,12 @@ async fn handle_container_exec_with_params(
     if let Some(python_guard) = detect_python_write(&params.command) {
         let guidance = guidance_for_python_write(&python_guard);
         let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-        sess
-            .notify_background_event_with_order(
-                &sub_id,
-                order,
-                format!("Command guard: {}", guidance.clone()),
-            )
-            .await;
+        sess.notify_background_event_with_order(
+            &sub_id,
+            order,
+            format!("Command guard: {}", guidance.clone()),
+        )
+        .await;
 
         return ResponseInputItem::FunctionCallOutput {
             call_id,
@@ -7580,17 +7921,19 @@ async fn handle_container_exec_with_params(
                 );
 
                 let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-                sess
-                    .notify_background_event_with_order(
-                        &sub_id,
-                        order,
-                        format!("Command guard: {}", guidance.clone()),
-                    )
-                    .await;
+                sess.notify_background_event_with_order(
+                    &sub_id,
+                    order,
+                    format!("Command guard: {}", guidance.clone()),
+                )
+                .await;
 
                 return ResponseInputItem::FunctionCallOutput {
                     call_id,
-                    output: FunctionCallOutputPayload { content: guidance, success: None },
+                    output: FunctionCallOutputPayload {
+                        content: guidance,
+                        success: None,
+                    },
                 };
             }
         }
@@ -7615,32 +7958,44 @@ async fn handle_container_exec_with_params(
                     );
 
                     let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-                    sess
-                        .notify_background_event_with_order(
-                            &sub_id,
-                            order,
-                            format!("Command guard: {}", guidance.clone()),
-                        )
-                        .await;
+                    sess.notify_background_event_with_order(
+                        &sub_id,
+                        order,
+                        format!("Command guard: {}", guidance.clone()),
+                    )
+                    .await;
 
                     return ResponseInputItem::FunctionCallOutput {
                         call_id,
-                        output: FunctionCallOutputPayload { content: guidance, success: None },
+                        output: FunctionCallOutputPayload {
+                            content: guidance,
+                            success: None,
+                        },
                     };
                 }
             }
         }
 
-        fn strip_tok2(t: &str) -> &str { t.trim_matches(|c| matches!(c, '(' | ')' | '{' | '}' | '\'' | '"')) }
+        fn strip_tok2(t: &str) -> &str {
+            t.trim_matches(|c| matches!(c, '(' | ')' | '{' | '}' | '\'' | '"'))
+        }
         let mut i = 0usize;
         // Skip env assignments and simple wrappers at the front
         while i < params.command.len() {
             let tok = strip_tok2(&params.command[i]);
-            if tok.is_empty() { i += 1; continue; }
-            if tok.contains('=') && !tok.starts_with('=') && !tok.starts_with('-') { i += 1; continue; }
+            if tok.is_empty() {
+                i += 1;
+                continue;
+            }
+            if tok.contains('=') && !tok.starts_with('=') && !tok.starts_with('-') {
+                i += 1;
+                continue;
+            }
             if matches!(tok, "env" | "sudo" | "command" | "time" | "nohup" | "nice") {
                 i += 1;
-                while i < params.command.len() && strip_tok2(&params.command[i]).starts_with('-') { i += 1; }
+                while i < params.command.len() && strip_tok2(&params.command[i]).starts_with('-') {
+                    i += 1;
+                }
                 continue;
             }
             break;
@@ -7651,23 +8006,44 @@ async fn handle_container_exec_with_params(
                 i += 1;
                 while i < params.command.len() {
                     let t = strip_tok2(&params.command[i]);
-                    if t.is_empty() { i += 1; continue; }
-                    if matches!(t, "-C" | "--git-dir" | "--work-tree" | "-c") {
-                        i += 1; if i < params.command.len() { i += 1; }
+                    if t.is_empty() {
+                        i += 1;
                         continue;
                     }
-                    if t.starts_with("--git-dir=") || t.starts_with("--work-tree=") || t.starts_with("-c") { i += 1; continue; }
-                    if t.starts_with('-') { i += 1; continue; }
+                    if matches!(t, "-C" | "--git-dir" | "--work-tree" | "-c") {
+                        i += 1;
+                        if i < params.command.len() {
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    if t.starts_with("--git-dir=")
+                        || t.starts_with("--work-tree=")
+                        || t.starts_with("-c")
+                    {
+                        i += 1;
+                        continue;
+                    }
+                    if t.starts_with('-') {
+                        i += 1;
+                        continue;
+                    }
                     break;
                 }
                 if i < params.command.len() {
                     let sub = strip_tok2(&params.command[i]);
-                    let args: Vec<&str> = params.command[i + 1..].iter().map(|t| strip_tok2(t)).collect();
+                    let args: Vec<&str> = params.command[i + 1..]
+                        .iter()
+                        .map(|t| strip_tok2(t))
+                        .collect();
                     let kind = match sub {
                         "checkout" => {
                             if args.iter().any(|a| *a == "--") {
                                 Some(SensitiveGitKind::PathCheckout)
-                            } else if args.iter().any(|a| matches!(*a, "-b" | "-B" | "--orphan" | "--detach")) {
+                            } else if args
+                                .iter()
+                                .any(|a| matches!(*a, "-b" | "-B" | "--orphan" | "--detach"))
+                            {
                                 Some(SensitiveGitKind::BranchChange)
                             } else if args.first().copied() == Some("-") {
                                 Some(SensitiveGitKind::BranchChange)
@@ -7692,20 +8068,31 @@ async fn handle_container_exec_with_params(
                             "bash".to_string(),
                             "-lc".to_string(),
                             format!("confirm: {}", params.command.join(" ")),
-                        ]).unwrap_or_else(|_| "<failed to serialize suggested argv>".to_string());
+                        ])
+                        .unwrap_or_else(|_| "<failed to serialize suggested argv>".to_string());
 
-                        let guidance = guidance_for_sensitive_git(kind, "original_argv", &format!("{:?}", params.command), &suggested);
+                        let guidance = guidance_for_sensitive_git(
+                            kind,
+                            "original_argv",
+                            &format!("{:?}", params.command),
+                            &suggested,
+                        );
 
                         let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-                        sess
-                            .notify_background_event_with_order(
-                                &sub_id,
-                                order,
-                                format!("Command guard: {}", guidance.clone()),
-                            )
-                            .await;
+                        sess.notify_background_event_with_order(
+                            &sub_id,
+                            order,
+                            format!("Command guard: {}", guidance.clone()),
+                        )
+                        .await;
 
-                        return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: guidance, success: None } };
+                        return ResponseInputItem::FunctionCallOutput {
+                            call_id,
+                            output: FunctionCallOutputPayload {
+                                content: guidance,
+                                success: None,
+                            },
+                        };
                     }
                 }
             }
@@ -7721,17 +8108,19 @@ async fn handle_container_exec_with_params(
             if let Some(branch_root) = git_worktree::branch_worktree_root(sess.get_cwd()) {
                 if let Some(guidance) = guard_apply_patch_outside_branch(&branch_root, &action) {
                     let order = sess.next_background_order(&sub_id, attempt_req, output_index);
-                    sess
-                        .notify_background_event_with_order(
-                            &sub_id,
-                            order,
-                            format!("Command guard: {}", guidance.clone()),
-                        )
-                        .await;
+                    sess.notify_background_event_with_order(
+                        &sub_id,
+                        order,
+                        format!("Command guard: {}", guidance.clone()),
+                    )
+                    .await;
 
                     return ResponseInputItem::FunctionCallOutput {
                         call_id,
-                        output: FunctionCallOutputPayload { content: guidance, success: None },
+                        output: FunctionCallOutputPayload {
+                            content: guidance,
+                            success: None,
+                        },
                     };
                 }
             }
@@ -7751,16 +8140,15 @@ async fn handle_container_exec_with_params(
             };
 
             // FileBeforeWrite hook for apply_patch
-            sess
-                .run_hooks_for_exec_event(
-                    turn_diff_tracker,
-                    ProjectHookEvent::FileBeforeWrite,
-                    &hook_ctx,
-                    &params,
-                    None,
-                    attempt_req,
-                )
-                .await;
+            sess.run_hooks_for_exec_event(
+                turn_diff_tracker,
+                ProjectHookEvent::FileBeforeWrite,
+                &hook_ctx,
+                &params,
+                None,
+                attempt_req,
+            )
+            .await;
 
             let patch_start = std::time::Instant::now();
 
@@ -7790,7 +8178,8 @@ async fn handle_container_exec_with_params(
                         auto_approved: run.auto_approved,
                         changes,
                     });
-                    let event = sess.make_event_with_order(&sub_id, begin_event, order_begin, seq_hint);
+                    let event =
+                        sess.make_event_with_order(&sub_id, begin_event, order_begin, seq_hint);
                     let _ = sess.tx_event.send(event).await;
 
                     let order_end = crate::protocol::OrderMeta {
@@ -7829,16 +8218,15 @@ async fn handle_container_exec_with_params(
                         timed_out: false,
                     };
 
-                    sess
-                        .run_hooks_for_exec_event(
-                            turn_diff_tracker,
-                            ProjectHookEvent::FileAfterWrite,
-                            &hook_ctx,
-                            &params,
-                            Some(&hook_output),
-                            attempt_req,
-                        )
-                        .await;
+                    sess.run_hooks_for_exec_event(
+                        turn_diff_tracker,
+                        ProjectHookEvent::FileAfterWrite,
+                        &hook_ctx,
+                        &params,
+                        Some(&hook_output),
+                        attempt_req,
+                    )
+                    .await;
 
                     if let Ok(Some(unified_diff)) = turn_diff_tracker.get_unified_diff() {
                         let diff_event = sess.make_event(
@@ -7909,10 +8297,7 @@ async fn handle_container_exec_with_params(
         } => {
             if let Some(manager) = otel_event_manager.as_ref() {
                 let (decision_for_log, source) = if user_explicitly_approved {
-                    (
-                        ReviewDecision::ApprovedForSession,
-                        ToolDecisionSource::User,
-                    )
+                    (ReviewDecision::ApprovedForSession, ToolDecisionSource::User)
                 } else {
                     (ReviewDecision::Approved, ToolDecisionSource::Config)
                 };
@@ -7990,26 +8375,27 @@ async fn handle_container_exec_with_params(
         apply_patch: None,
     };
 
-    let display_label = crate::util::strip_bash_lc_and_escape(&exec_command_context.command_for_display);
+    let display_label =
+        crate::util::strip_bash_lc_and_escape(&exec_command_context.command_for_display);
     let params = maybe_run_with_user_profile(params, sess);
 
     // ToolBefore hook for shell/container.exec commands
     let params_for_hooks = params.clone();
-    sess
-        .run_hooks_for_exec_event(
-            turn_diff_tracker,
-            ProjectHookEvent::ToolBefore,
-            &exec_command_context,
-            &params_for_hooks,
-            None,
-            attempt_req,
-        )
-        .await;
+    sess.run_hooks_for_exec_event(
+        turn_diff_tracker,
+        ProjectHookEvent::ToolBefore,
+        &exec_command_context,
+        &params_for_hooks,
+        None,
+        attempt_req,
+    )
+    .await;
 
     // Prepare tail buffer and background registry entry
     let tail_buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
     let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    let result_cell: std::sync::Arc<std::sync::Mutex<Option<ExecToolCallOutput>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let result_cell: std::sync::Arc<std::sync::Mutex<Option<ExecToolCallOutput>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     let backgrounded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let suppress_event_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let order_meta_for_end = crate::protocol::OrderMeta {
@@ -8046,15 +8432,14 @@ async fn handle_container_exec_with_params(
     let attempt_req_for_task = attempt_req;
 
     // Emit BEGIN event using the normal path so the TUI shows a running cell
-    sess
-        .on_exec_command_begin(
-            turn_diff_tracker,
-            exec_command_context.clone(),
-            seq_hint_for_exec,
-            output_index,
-            attempt_req,
-        )
-        .await;
+    sess.on_exec_command_begin(
+        turn_diff_tracker,
+        exec_command_context.clone(),
+        seq_hint_for_exec,
+        output_index,
+        attempt_req,
+    )
+    .await;
 
     // Spawn the runner that streams output and, on completion, emits END and records result.
     let tx_event = sess.tx_event.clone();
@@ -8064,12 +8449,7 @@ async fn handle_container_exec_with_params(
     let sandbox_cwd = sess.get_cwd().to_path_buf();
     let code_linux_sandbox_exe = sess.code_linux_sandbox_exe.clone();
     let exec_spool_dir_for_task = if sess.client.debug_enabled() {
-        Some(
-            sess.client
-                .code_home()
-                .join("debug_logs")
-                .join("exec"),
-        )
+        Some(sess.client.code_home().join("debug_logs").join("exec"))
     } else {
         None
     };
@@ -8110,8 +8490,13 @@ async fn handle_container_exec_with_params(
 
         // Normalize to ExecToolCallOutput
         let (out, exit_code) = match res {
-            Ok(o) => { let exit = o.exit_code; (o, exit) },
-            Err(CodexErr::Sandbox(SandboxErr::Timeout { output })) => (output.as_ref().clone(), 124),
+            Ok(o) => {
+                let exit = o.exit_code;
+                (o, exit)
+            }
+            Err(CodexErr::Sandbox(SandboxErr::Timeout { output })) => {
+                (output.as_ref().clone(), 124)
+            }
             Err(e) => {
                 let msg = get_error_message_ui(&e);
                 (
@@ -8136,7 +8521,12 @@ async fn handle_container_exec_with_params(
             exit_code,
             duration: out.duration,
         });
-        let ev = Event { id: sub_id_for_events.clone(), event_seq: 0, msg: end_msg, order: Some(order_meta_for_end) };
+        let ev = Event {
+            id: sub_id_for_events.clone(),
+            event_seq: 0,
+            msg: end_msg,
+            order: Some(order_meta_for_end),
+        };
         let _ = tx_event.send(ev).await;
 
         // Store result for waiters
@@ -8170,7 +8560,12 @@ async fn handle_container_exec_with_params(
                     format!("{label} completed in background")
                 };
                 let bg_event = EventMsg::BackgroundEvent(BackgroundEventEvent { message });
-                let ev = Event { id: sub_id_for_events.clone(), event_seq: 0, msg: bg_event, order: None };
+                let ev = Event {
+                    id: sub_id_for_events.clone(),
+                    event_seq: 0,
+                    msg: bg_event,
+                    order: None,
+                };
                 let _ = tx_event.send(ev).await;
 
                 if let Some(tx) = TX_SUB_GLOBAL.get() {
@@ -8179,7 +8574,10 @@ async fn handle_container_exec_with_params(
                     } else {
                         display_label_task.clone()
                     };
-                    let header = format!("Background shell completed ({header_label}), exit_code={}, duration={:?}.", out.exit_code, out.duration);
+                    let header = format!(
+                        "Background shell completed ({header_label}), exit_code={}, duration={:?}.",
+                        out.exit_code, out.duration
+                    );
                     let full_body = format_exec_output_str(&out);
                     let body = truncate_exec_output_for_storage(
                         &sandbox_cwd,
@@ -8190,11 +8588,16 @@ async fn handle_container_exec_with_params(
                     );
                     let dev_text = format!("{}\n\n{}", header, body);
                     let _ = tx
-                        .send(Submission { id: uuid::Uuid::new_v4().to_string(), op: Op::AddPendingInputDeveloper { text: dev_text } })
+                        .send(Submission {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            op: Op::AddPendingInputDeveloper { text: dev_text },
+                        })
                         .await;
                 }
             }
-            if let Some(n) = ANY_BG_NOTIFY.get() { n.notify_waiters(); }
+            if let Some(n) = ANY_BG_NOTIFY.get() {
+                n.notify_waiters();
+            }
         }
         notify_task.notify_waiters();
     });
@@ -8245,22 +8648,33 @@ async fn handle_container_exec_with_params(
                 }
             }
 
-            sess
-                .run_hooks_for_exec_event(
-                    turn_diff_tracker,
-                    ProjectHookEvent::ToolAfter,
-                    &exec_command_context,
-                    &params_for_hooks,
-                    Some(&done),
-                    attempt_req,
-                )
-                .await;
+            sess.run_hooks_for_exec_event(
+                turn_diff_tracker,
+                ProjectHookEvent::ToolAfter,
+                &exec_command_context,
+                &params_for_hooks,
+                Some(&done),
+                attempt_req,
+            )
+            .await;
 
-            return ResponseInputItem::FunctionCallOutput { call_id: call_id.clone(), output: FunctionCallOutputPayload { content, success: Some(is_success) } };
+            return ResponseInputItem::FunctionCallOutput {
+                call_id: call_id.clone(),
+                output: FunctionCallOutputPayload {
+                    content,
+                    success: Some(is_success),
+                },
+            };
         } else {
             // Fallback (should not happen): indicate completion without detail
             let msg = format!("Command completed.");
-            return ResponseInputItem::FunctionCallOutput { call_id: call_id.clone(), output: FunctionCallOutputPayload { content: msg, success: Some(true) } };
+            return ResponseInputItem::FunctionCallOutput {
+                call_id: call_id.clone(),
+                output: FunctionCallOutputPayload {
+                    content: msg,
+                    success: Some(true),
+                },
+            };
         }
     }
 
@@ -8269,15 +8683,20 @@ async fn handle_container_exec_with_params(
     let tail = String::from_utf8_lossy(&tail_buf.lock().unwrap()).to_string();
     let header = format!(
         "Command running in background (call_id={}).\nTo wait: wait(call_id=\"{}\")\nYou can continue other work or wait. You'll be notified when the command completes.",
-        call_id,
-        call_id
+        call_id, call_id
     );
     let msg = if tail.is_empty() {
         header
     } else {
         format!("{}\n\nOutput so far (tail):\n{}", header, tail)
     };
-    ResponseInputItem::FunctionCallOutput { call_id: call_id.clone(), output: FunctionCallOutputPayload { content: msg, success: Some(true) } }
+    ResponseInputItem::FunctionCallOutput {
+        call_id: call_id.clone(),
+        output: FunctionCallOutputPayload {
+            content: msg,
+            success: Some(true),
+        },
+    }
 }
 
 #[allow(dead_code)]
@@ -8336,7 +8755,10 @@ async fn handle_sandbox_error(
             };
             return ResponseInputItem::FunctionCallOutput {
                 call_id,
-                output: FunctionCallOutputPayload { content, success: Some(false) },
+                output: FunctionCallOutputPayload {
+                    content,
+                    success: Some(false),
+                },
             };
         }
         AskForApproval::UnlessTrusted | AskForApproval::OnFailure => (),
@@ -8363,13 +8785,12 @@ async fn handle_sandbox_error(
     // For now, we categorically ask the user to retry without sandbox and
     // emit the raw error as a background event.
     let failure_order = sess.next_background_order(&sub_id, attempt_req, None);
-    sess
-        .notify_background_event_with_order(
-            &sub_id,
-            failure_order,
-            format!("Execution failed: {error}"),
-        )
-        .await;
+    sess.notify_background_event_with_order(
+        &sub_id,
+        failure_order,
+        format!("Execution failed: {error}"),
+    )
+    .await;
 
     let rx_approve = sess
         .request_command_approval(
@@ -8416,13 +8837,12 @@ async fn handle_sandbox_error(
 
     // Inform UI we are retrying without sandbox.
     let retry_order = sess.next_background_order(&sub_id, attempt_req, None);
-    sess
-        .notify_background_event_with_order(
-            &sub_id,
-            retry_order,
-            "retrying command without sandbox",
-        )
-        .await;
+    sess.notify_background_event_with_order(
+        &sub_id,
+        retry_order,
+        "retrying command without sandbox",
+    )
+    .await;
     // This is an escalated retry; the policy will not be examined and the sandbox has been set to `None`.
     // Use the same attempt_req as the tool call that failed; this retry is still part of the current provider attempt.
     let retry_output_result = sess
@@ -8444,7 +8864,11 @@ async fn handle_sandbox_error(
                         tx_event: sess.tx_event.clone(),
                         session: None,
                         tail_buf: None,
-                        order: Some(crate::protocol::OrderMeta { request_ordinal: attempt_req, output_index: None, sequence_number: None }),
+                        order: Some(crate::protocol::OrderMeta {
+                            request_ordinal: attempt_req,
+                            output_index: None,
+                            sequence_number: None,
+                        }),
                         spool_dir: if sess.client.debug_enabled() {
                             Some(sess.client.code_home().join("debug_logs").join("exec"))
                         } else {
@@ -8510,9 +8934,13 @@ pub(super) fn truncate_middle_bytes(s: &str, max_bytes: usize) -> (String, bool,
     let prefix_end = {
         let mut end = left_budget.min(s.len());
         if let Some(head) = s.get(..end) {
-            if let Some(i) = head.rfind('\n') { end = i + 1; }
+            if let Some(i) = head.rfind('\n') {
+                end = i + 1;
+            }
         }
-        while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
         end
     };
 
@@ -8520,9 +8948,13 @@ pub(super) fn truncate_middle_bytes(s: &str, max_bytes: usize) -> (String, bool,
     let suffix_start = {
         let mut start = s.len().saturating_sub(right_budget);
         if let Some(tail) = s.get(start..) {
-            if let Some(i) = tail.find('\n') { start += i + 1; }
+            if let Some(i) = tail.find('\n') {
+                start += i + 1;
+            }
         }
-        while start < s.len() && !s.is_char_boundary(start) { start += 1; }
+        while start < s.len() && !s.is_char_boundary(start) {
+            start += 1;
+        }
         start
     };
 
@@ -8574,8 +9006,7 @@ fn truncate_exec_output_for_storage(
     full: &str,
     max_tool_output_bytes: usize,
 ) -> String {
-    let (maybe_truncated, was_truncated, _, _) =
-        truncate_middle_bytes(full, max_tool_output_bytes);
+    let (maybe_truncated, was_truncated, _, _) = truncate_middle_bytes(full, max_tool_output_bytes);
     if !was_truncated {
         return maybe_truncated;
     }
@@ -8586,7 +9017,9 @@ fn truncate_exec_output_for_storage(
         .and_then(|dir| write_agent_file(&dir, &filename, full))
     {
         Ok(path) => format!("\n\n[Full output saved to: {}]", path.display()),
-        Err(e) => format!("\n\n[Full output was too large and truncation applied; failed to save file: {e}]")
+        Err(e) => format!(
+            "\n\n[Full output was too large and truncation applied; failed to save file: {e}]"
+        ),
     };
     let mut truncated = maybe_truncated;
     truncated.push_str(&file_note);
@@ -8615,7 +9048,10 @@ fn format_exec_output_with_limit(
     }
 
     #[derive(Serialize)]
-    struct ExecOutput<'a> { output: &'a str, metadata: ExecMetadata }
+    struct ExecOutput<'a> {
+        output: &'a str,
+        metadata: ExecMetadata,
+    }
 
     // round to 1 decimal place
     let duration_seconds = ((duration.as_secs_f32()) * 10.0).round() / 10.0;
@@ -8786,10 +9222,7 @@ fn agent_completion_wake_messages(
     messages
 }
 
-async fn enqueue_agent_completion_wake(
-    sess: &Arc<Session>,
-    messages: Vec<ResponseInputItem>,
-) {
+async fn enqueue_agent_completion_wake(sess: &Arc<Session>, messages: Vec<ResponseInputItem>) {
     if messages.is_empty() {
         return;
     }
@@ -8817,8 +9250,8 @@ async fn enqueue_agent_completion_wake(
 mod agent_completion_wake_tests {
     use std::collections::HashSet;
 
-    use super::agent_completion_wake_messages;
     use super::AgentSourceKind;
+    use super::agent_completion_wake_messages;
     use crate::agent_tool::AgentStatusUpdatePayload;
     use crate::protocol::AgentInfo;
 
@@ -8923,8 +9356,11 @@ async fn send_agent_status_update(sess: &Session) {
                 error: agent.error.clone(),
                 elapsed_ms,
                 token_count: None,
-                last_activity_at: matches!(agent.status, AgentStatus::Pending | AgentStatus::Running)
-                    .then(|| agent.last_activity.to_rfc3339()),
+                last_activity_at: matches!(
+                    agent.status,
+                    AgentStatus::Pending | AgentStatus::Running
+                )
+                .then(|| agent.last_activity.to_rfc3339()),
                 seconds_since_last_activity: matches!(
                     agent.status,
                     AgentStatus::Pending | AgentStatus::Running
@@ -8959,11 +9395,7 @@ async fn send_agent_status_update(sess: &Session) {
 }
 
 /// Add a screenshot to pending screenshots for the next model request
-pub(super) fn add_pending_screenshot(
-    sess: &Session,
-    screenshot_path: PathBuf,
-    url: String,
-) {
+pub(super) fn add_pending_screenshot(sess: &Session, screenshot_path: PathBuf, url: String) {
     // Do not queue screenshots for next turn anymore; we inject fresh per-turn.
     tracing::info!("Captured screenshot; updating UI and using per-turn injection");
 
@@ -9044,7 +9476,8 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = ResponseInputItem>,
 {
-    use crate::protocol::{CustomToolCallBeginEvent, CustomToolCallEndEvent};
+    use crate::protocol::CustomToolCallBeginEvent;
+    use crate::protocol::CustomToolCallEndEvent;
     use std::time::Instant;
 
     // Send begin event with ordering
@@ -9087,7 +9520,11 @@ where
     result
 }
 
-async fn handle_browser_tool(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_tool(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     use serde_json::Value;
 
     let parsed_value = match serde_json::from_str::<Value>(&arguments) {
@@ -9165,7 +9602,11 @@ async fn handle_browser_tool(sess: &Session, ctx: &ToolCallCtx, arguments: Strin
     }
 }
 
-async fn handle_browser_open(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_open(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     // Parse arguments as JSON for the event
     let params = serde_json::from_str(&arguments).ok();
 
@@ -9407,7 +9848,11 @@ async fn handle_browser_status(sess: &Session, ctx: &ToolCallCtx) -> ResponseInp
     .await
 }
 
-async fn handle_browser_click(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_click(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str::<serde_json::Value>(&arguments).ok();
     let sess_clone = sess;
     let call_id_clone = ctx.call_id.clone();
@@ -9464,7 +9909,10 @@ async fn handle_browser_click(sess: &Session, ctx: &ToolCallCtx, arguments: Stri
                             return ResponseInputItem::FunctionCallOutput {
                                 call_id: call_id_clone.clone(),
                                 output: FunctionCallOutputPayload {
-                                    content: format!("Failed to get current cursor position: {}", e),
+                                    content: format!(
+                                        "Failed to get current cursor position: {}",
+                                        e
+                                    ),
                                     success: Some(false),
                                 },
                             };
@@ -9489,15 +9937,13 @@ async fn handle_browser_click(sess: &Session, ctx: &ToolCallCtx, arguments: Stri
                 };
 
                 match action_result {
-                    Ok((x, y, label)) => {
-                        ResponseInputItem::FunctionCallOutput {
-                            call_id: call_id_clone.clone(),
-                            output: FunctionCallOutputPayload {
-                                content: format!("{} at ({}, {})", label, x, y),
-                                success: Some(true),
-                            },
-                        }
-                    }
+                    Ok((x, y, label)) => ResponseInputItem::FunctionCallOutput {
+                        call_id: call_id_clone.clone(),
+                        output: FunctionCallOutputPayload {
+                            content: format!("{} at ({}, {})", label, x, y),
+                            success: Some(true),
+                        },
+                    },
                     Err(e) => ResponseInputItem::FunctionCallOutput {
                         call_id: call_id_clone.clone(),
                         output: FunctionCallOutputPayload {
@@ -9506,22 +9952,27 @@ async fn handle_browser_click(sess: &Session, ctx: &ToolCallCtx, arguments: Stri
                         },
                     },
                 }
-    } else {
-        ResponseInputItem::FunctionCallOutput {
-            call_id: call_id_clone,
-            output: FunctionCallOutputPayload {
-                content: "Browser is not initialized. Use browser_open to start the browser."
-                    .to_string(),
-                success: Some(false),
-            },
-        }
-    }
+            } else {
+                ResponseInputItem::FunctionCallOutput {
+                    call_id: call_id_clone,
+                    output: FunctionCallOutputPayload {
+                        content:
+                            "Browser is not initialized. Use browser_open to start the browser."
+                                .to_string(),
+                        success: Some(false),
+                    },
+                }
+            }
         },
     )
     .await
 }
 
-async fn handle_browser_move(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_move(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -9564,15 +10015,13 @@ async fn handle_browser_move(sess: &Session, ctx: &ToolCallCtx, arguments: Strin
                         };
 
                         match result {
-                            Ok((x, y)) => {
-                                ResponseInputItem::FunctionCallOutput {
-                                    call_id: call_id_clone.clone(),
-                                    output: FunctionCallOutputPayload {
-                                        content: format!("Moved mouse position to ({}, {})", x, y),
-                                        success: Some(true),
-                                    },
-                                }
-                            }
+                            Ok((x, y)) => ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone.clone(),
+                                output: FunctionCallOutputPayload {
+                                    content: format!("Moved mouse position to ({}, {})", x, y),
+                                    success: Some(true),
+                                },
+                            },
                             Err(e) => ResponseInputItem::FunctionCallOutput {
                                 call_id: call_id_clone.clone(),
                                 output: FunctionCallOutputPayload {
@@ -9594,8 +10043,9 @@ async fn handle_browser_move(sess: &Session, ctx: &ToolCallCtx, arguments: Strin
                 ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
                     output: FunctionCallOutputPayload {
-                        content: "Browser is not initialized. Use browser_open to start the browser."
-                            .to_string(),
+                        content:
+                            "Browser is not initialized. Use browser_open to start the browser."
+                                .to_string(),
                         success: Some(false),
                     },
                 }
@@ -9605,7 +10055,11 @@ async fn handle_browser_move(sess: &Session, ctx: &ToolCallCtx, arguments: Strin
     .await
 }
 
-async fn handle_browser_type(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_type(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -9628,15 +10082,13 @@ async fn handle_browser_type(sess: &Session, ctx: &ToolCallCtx, arguments: Strin
                         let text = json.get("text").and_then(|v| v.as_str()).unwrap_or("");
 
                         match browser_manager.type_text(text).await {
-                            Ok(_) => {
-                                ResponseInputItem::FunctionCallOutput {
-                                    call_id: call_id_clone.clone(),
-                                    output: FunctionCallOutputPayload {
-                                        content: format!("Typed: {}", text),
-                                        success: Some(true),
-                                    },
-                                }
-                            }
+                            Ok(_) => ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone.clone(),
+                                output: FunctionCallOutputPayload {
+                                    content: format!("Typed: {}", text),
+                                    success: Some(true),
+                                },
+                            },
                             Err(e) => ResponseInputItem::FunctionCallOutput {
                                 call_id: call_id_clone.clone(),
                                 output: FunctionCallOutputPayload {
@@ -9670,7 +10122,11 @@ async fn handle_browser_type(sess: &Session, ctx: &ToolCallCtx, arguments: Strin
     .await
 }
 
-async fn handle_browser_key(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_key(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -9749,7 +10205,11 @@ async fn handle_browser_key(sess: &Session, ctx: &ToolCallCtx, arguments: String
     .await
 }
 
-async fn handle_browser_javascript(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_javascript(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -9872,7 +10332,11 @@ async fn handle_browser_javascript(sess: &Session, ctx: &ToolCallCtx, arguments:
     .await
 }
 
-async fn handle_browser_scroll(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_scroll(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -9896,47 +10360,51 @@ async fn handle_browser_scroll(sess: &Session, ctx: &ToolCallCtx, arguments: Str
                         let dy = json.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
                         match browser_manager.scroll_by(dx, dy).await {
-                    Ok(_) => {
-                        ResponseInputItem::FunctionCallOutput {
-                            call_id: call_id_clone.clone(),
-                            output: FunctionCallOutputPayload {
-                                content: format!("Scrolled by ({}, {})", dx, dy),
-                                success: Some(true),
+                            Ok(_) => ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone.clone(),
+                                output: FunctionCallOutputPayload {
+                                    content: format!("Scrolled by ({}, {})", dx, dy),
+                                    success: Some(true),
+                                },
+                            },
+                            Err(e) => ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone.clone(),
+                                output: FunctionCallOutputPayload {
+                                    content: format!("Failed to scroll: {}", e),
+                                    success: Some(false),
+                                },
                             },
                         }
                     }
                     Err(e) => ResponseInputItem::FunctionCallOutput {
-                        call_id: call_id_clone.clone(),
+                        call_id: call_id_clone,
                         output: FunctionCallOutputPayload {
-                            content: format!("Failed to scroll: {}", e),
+                            content: format!("Failed to parse browser_scroll arguments: {}", e),
                             success: Some(false),
                         },
                     },
                 }
+            } else {
+                ResponseInputItem::FunctionCallOutput {
+                    call_id: call_id_clone,
+                    output: FunctionCallOutputPayload {
+                        content:
+                            "Browser is not initialized. Use browser_open to start the browser."
+                                .to_string(),
+                        success: Some(false),
+                    },
+                }
             }
-            Err(e) => ResponseInputItem::FunctionCallOutput {
-                call_id: call_id_clone,
-                output: FunctionCallOutputPayload {
-                    content: format!("Failed to parse browser_scroll arguments: {}", e),
-                    success: Some(false),
-                },
-            },
-        }
-    } else {
-        ResponseInputItem::FunctionCallOutput {
-            call_id: call_id_clone,
-            output: FunctionCallOutputPayload {
-                content: "Browser is not initialized. Use browser_open to start the browser.".to_string(),
-                success: Some(false),
-            },
-        }
-    }
         },
     )
     .await
 }
 
-async fn handle_browser_console(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_console(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -9952,7 +10420,10 @@ async fn handle_browser_console(sess: &Session, ctx: &ToolCallCtx, arguments: St
             if let Some(browser_manager) = browser_manager {
                 let args: Result<Value, _> = serde_json::from_str(&arguments_clone);
                 let lines = match args {
-                    Ok(json) => json.get("lines").and_then(|v| v.as_u64()).map(|n| n as usize),
+                    Ok(json) => json
+                        .get("lines")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize),
                     Err(_) => None,
                 };
 
@@ -9967,17 +10438,25 @@ async fn handle_browser_console(sess: &Session, ctx: &ToolCallCtx, arguments: St
                                 output.push_str("Console logs:\n");
                                 for log in logs_array {
                                     if let Some(log_obj) = log.as_object() {
-                                        let timestamp = log_obj.get("timestamp")
+                                        let timestamp = log_obj
+                                            .get("timestamp")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("");
-                                        let level = log_obj.get("level")
+                                        let level = log_obj
+                                            .get("level")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("log");
-                                        let message = log_obj.get("message")
+                                        let message = log_obj
+                                            .get("message")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("");
 
-                                        output.push_str(&format!("[{}] [{}] {}\n", timestamp, level.to_uppercase(), message));
+                                        output.push_str(&format!(
+                                            "[{}] [{}] {}\n",
+                                            timestamp,
+                                            level.to_uppercase(),
+                                            message
+                                        ));
                                     }
                                 }
                                 output
@@ -10006,7 +10485,8 @@ async fn handle_browser_console(sess: &Session, ctx: &ToolCallCtx, arguments: St
                 ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
                     output: FunctionCallOutputPayload {
-                        content: "Browser is not enabled. Use browser_open to enable it first.".to_string(),
+                        content: "Browser is not enabled. Use browser_open to enable it first."
+                            .to_string(),
                         success: Some(false),
                     },
                 }
@@ -10016,7 +10496,11 @@ async fn handle_browser_console(sess: &Session, ctx: &ToolCallCtx, arguments: St
     .await
 }
 
-async fn handle_browser_cdp(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_cdp(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -10041,7 +10525,10 @@ async fn handle_browser_cdp(sess: &Session, ctx: &ToolCallCtx, arguments: String
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let params = json.get("params").cloned().unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+                        let params = json
+                            .get("params")
+                            .cloned()
+                            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
                         let target = json
                             .get("target")
                             .and_then(|v| v.as_str())
@@ -10096,7 +10583,9 @@ async fn handle_browser_cdp(sess: &Session, ctx: &ToolCallCtx, arguments: String
                 ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
                     output: FunctionCallOutputPayload {
-                        content: "Browser is not initialized. Use browser_open to start the browser.".to_string(),
+                        content:
+                            "Browser is not initialized. Use browser_open to start the browser."
+                                .to_string(),
                         success: Some(false),
                     },
                 }
@@ -10106,7 +10595,11 @@ async fn handle_browser_cdp(sess: &Session, ctx: &ToolCallCtx, arguments: String
     .await
 }
 
-async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_inspect(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     use serde_json::json;
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
@@ -10125,7 +10618,10 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                 match args {
                     Ok(json) => {
                         // Determine target element: by id, by coords, or by cursor
-                        let id_attr = json.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let id_attr = json
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                         let mut x = json.get("x").and_then(|v| v.as_f64());
                         let mut y = json.get("y").and_then(|v| v.as_f64());
 
@@ -10145,7 +10641,10 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                                 .await
                                 .map_err(|e| e);
                             let root_id = match doc {
-                                Ok(v) => v.get("root").and_then(|r| r.get("nodeId")).and_then(|n| n.as_u64()),
+                                Ok(v) => v
+                                    .get("root")
+                                    .and_then(|r| r.get("nodeId"))
+                                    .and_then(|n| n.as_u64()),
                                 Err(_) => None,
                             };
                             if let Some(root_node_id) = root_id {
@@ -10180,7 +10679,9 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                                     // Prefer nodeId; if absent, push backendNodeId
                                     if let Some(n) = v.get("nodeId").cloned() {
                                         Some(n)
-                                    } else if let Some(backend) = v.get("backendNodeId").and_then(|b| b.as_u64()) {
+                                    } else if let Some(backend) =
+                                        v.get("backendNodeId").and_then(|b| b.as_u64())
+                                    {
                                         let pushed = browser_manager
                                             .execute_cdp(
                                                 "DOM.pushNodesByBackendIdsToFrontend",
@@ -10189,7 +10690,10 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                                             .await
                                             .ok();
                                         pushed
-                                            .and_then(|pv| pv.get("nodeIds").and_then(|arr| arr.as_array().cloned()))
+                                            .and_then(|pv| {
+                                                pv.get("nodeIds")
+                                                    .and_then(|arr| arr.as_array().cloned())
+                                            })
                                             .and_then(|arr| arr.first().cloned())
                                     } else {
                                         None
@@ -10207,7 +10711,8 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                                 return ResponseInputItem::FunctionCallOutput {
                                     call_id: call_id_clone,
                                     output: FunctionCallOutputPayload {
-                                        content: "Failed to resolve target node for inspection".to_string(),
+                                        content: "Failed to resolve target node for inspection"
+                                            .to_string(),
                                         success: Some(false),
                                     },
                                 };
@@ -10236,7 +10741,9 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                             .unwrap_or_else(|_| json!({}));
 
                         // Highlight the inspected node using Overlay domain (no screenshot capture here)
-                        let _ = browser_manager.execute_cdp("Overlay.enable", json!({})).await;
+                        let _ = browser_manager
+                            .execute_cdp("Overlay.enable", json!({}))
+                            .await;
                         let highlight_config = json!({
                             "showInfo": true,
                             "showStyles": false,
@@ -10246,10 +10753,12 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                             "borderColor": {"r": 255, "g": 229, "b": 153, "a": 0.60},
                             "marginColor": {"r": 246, "g": 178, "b": 107, "a": 0.60}
                         });
-                        let _ = browser_manager.execute_cdp(
-                            "Overlay.highlightNode",
-                            json!({ "nodeId": node_id, "highlightConfig": highlight_config })
-                        ).await;
+                        let _ = browser_manager
+                            .execute_cdp(
+                                "Overlay.highlightNode",
+                                json!({ "nodeId": node_id, "highlightConfig": highlight_config }),
+                            )
+                            .await;
                         // Do not hide here; keep highlight until the next browser command.
 
                         // Format output
@@ -10267,7 +10776,11 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                             out.push_str("Attributes:\n");
                             let mut it = arr.iter();
                             while let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                out.push_str(&format!("  {}=\"{}\"\n", k.as_str().unwrap_or(""), v.as_str().unwrap_or("")));
+                                out.push_str(&format!(
+                                    "  {}=\"{}\"\n",
+                                    k.as_str().unwrap_or(""),
+                                    v.as_str().unwrap_or("")
+                                ));
                             }
                         }
 
@@ -10277,7 +10790,9 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                             let snippet: String = one.chars().take(800).collect();
                             out.push_str("\nOuterHTML (truncated):\n");
                             out.push_str(&snippet);
-                            if one.len() > snippet.len() { out.push_str("…"); }
+                            if one.len() > snippet.len() {
+                                out.push_str("…");
+                            }
                             out.push('\n');
                         }
 
@@ -10287,7 +10802,9 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                         }
 
                         // Matched styles summary
-                        if let Some(rules) = styles.get("matchedCSSRules").and_then(|v| v.as_array()) {
+                        if let Some(rules) =
+                            styles.get("matchedCSSRules").and_then(|v| v.as_array())
+                        {
                             out.push_str(&format!("Matched CSS rules: {}\n", rules.len()));
                         }
 
@@ -10295,7 +10812,10 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
 
                         ResponseInputItem::FunctionCallOutput {
                             call_id: call_id_clone,
-                            output: FunctionCallOutputPayload { content: out, success: Some(true) },
+                            output: FunctionCallOutputPayload {
+                                content: out,
+                                success: Some(true),
+                            },
                         }
                     }
                     Err(e) => ResponseInputItem::FunctionCallOutput {
@@ -10310,7 +10830,9 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
                 ResponseInputItem::FunctionCallOutput {
                     call_id: call_id_clone,
                     output: FunctionCallOutputPayload {
-                        content: "Browser is not initialized. Use browser_open to start the browser.".to_string(),
+                        content:
+                            "Browser is not initialized. Use browser_open to start the browser."
+                                .to_string(),
                         success: Some(false),
                     },
                 }
@@ -10320,7 +10842,11 @@ async fn handle_browser_inspect(sess: &Session, ctx: &ToolCallCtx, arguments: St
     .await
 }
 
-async fn handle_browser_history(sess: &Session, ctx: &ToolCallCtx, arguments: String) -> ResponseInputItem {
+async fn handle_browser_history(
+    sess: &Session,
+    ctx: &ToolCallCtx,
+    arguments: String,
+) -> ResponseInputItem {
     let params = serde_json::from_str(&arguments).ok();
     let sess_clone = sess;
     let arguments_clone = arguments.clone();
@@ -10360,15 +10886,13 @@ async fn handle_browser_history(sess: &Session, ctx: &ToolCallCtx, arguments: St
                         };
 
                         match action_res {
-                            Ok(_) => {
-                                ResponseInputItem::FunctionCallOutput {
-                                    call_id: call_id_clone.clone(),
-                                    output: FunctionCallOutputPayload {
-                                        content: format!("History {} triggered", direction),
-                                        success: Some(true),
-                                    },
-                                }
-                            }
+                            Ok(_) => ResponseInputItem::FunctionCallOutput {
+                                call_id: call_id_clone.clone(),
+                                output: FunctionCallOutputPayload {
+                                    content: format!("History {} triggered", direction),
+                                    success: Some(true),
+                                },
+                            },
                             Err(e) => ResponseInputItem::FunctionCallOutput {
                                 call_id: call_id_clone.clone(),
                                 output: FunctionCallOutputPayload {
@@ -10500,7 +11024,10 @@ fn line_contains_cat_heredoc_write(line: &str) -> bool {
     false
 }
 
-fn guard_apply_patch_outside_branch(branch_root: &Path, action: &ApplyPatchAction) -> Option<String> {
+fn guard_apply_patch_outside_branch(
+    branch_root: &Path,
+    action: &ApplyPatchAction,
+) -> Option<String> {
     let branch_norm = match normalize_absolute(branch_root) {
         Some(path) => path,
         None => {
@@ -10583,8 +11110,7 @@ fn path_within(path: &Path, base: &Path) -> bool {
 fn guidance_for_cat_write(suggestion: &CatWriteSuggestion) -> String {
     format!(
         "Blocked cat heredoc that writes files directly. Use apply_patch to edit files so changes stay reviewable.\n\n{}: {}",
-        suggestion.label,
-        suggestion.original_value
+        suggestion.label, suggestion.original_value
     )
 }
 
@@ -10631,10 +11157,7 @@ fn detect_python_write_in_argv(argv: &[String]) -> Option<PythonWriteSuggestion>
 
 fn script_contains_python_write(script: &str) -> bool {
     let lower = script.to_ascii_lowercase();
-    if !(lower.contains("python ")
-        || lower.contains("python3")
-        || lower.contains("python\n"))
-    {
+    if !(lower.contains("python ") || lower.contains("python3") || lower.contains("python\n")) {
         return false;
     }
     contains_python_write_keywords(&lower)
@@ -10645,7 +11168,12 @@ fn python_code_writes_files(code: &str) -> bool {
 }
 
 fn contains_python_write_keywords(lower: &str) -> bool {
-    const KEYWORDS: &[&str] = &["write_text(", "write_bytes(", ".write_text(", ".write_bytes("];
+    const KEYWORDS: &[&str] = &[
+        "write_text(",
+        "write_bytes(",
+        ".write_text(",
+        ".write_bytes(",
+    ];
     KEYWORDS.iter().any(|needle| lower.contains(needle))
 }
 
@@ -10663,8 +11191,7 @@ fn is_python_command(cmd: &str) -> bool {
 fn guidance_for_python_write(suggestion: &PythonWriteSuggestion) -> String {
     format!(
         "Blocked python command that writes files directly. Use apply_patch to edit files so changes stay reviewable.\n\n{}: {}",
-        suggestion.label,
-        suggestion.original_value
+        suggestion.label, suggestion.original_value
     )
 }
 
@@ -10680,13 +11207,9 @@ struct RedundantCdSuggestion {
 fn detect_redundant_cd(argv: &[String], cwd: &Path) -> Option<RedundantCdSuggestion> {
     let normalized_cwd = normalize_path(cwd);
     if let Some((script_index, script)) = extract_shell_script_from_wrapper(argv) {
-        if let Some(suggestion) = detect_redundant_cd_in_shell(
-            argv,
-            script_index,
-            &script,
-            cwd,
-            &normalized_cwd,
-        ) {
+        if let Some(suggestion) =
+            detect_redundant_cd_in_shell(argv, script_index, &script, cwd, &normalized_cwd)
+        {
             return Some(suggestion);
         }
     }
@@ -10830,7 +11353,12 @@ fn is_simple_cd_target(target: &str) -> bool {
     if target.is_empty() || target == "-" {
         return false;
     }
-    !target.chars().any(|ch| matches!(ch, '$' | '`' | '*' | '?' | '[' | ']' | '{' | '}' | '(' | ')' | '|' | '>' | '<' | '!'))
+    !target.chars().any(|ch| {
+        matches!(
+            ch,
+            '$' | '`' | '*' | '?' | '[' | ']' | '{' | '}' | '(' | ')' | '|' | '>' | '<' | '!'
+        )
+    })
 }
 
 fn is_connector(token: &str) -> bool {
@@ -10867,7 +11395,10 @@ mod command_guard_detection_tests {
 
         let suggestion = detect_redundant_cd(&argv, &cwd).expect("should flag redundant cd");
         assert_eq!(suggestion.label, "original_script");
-        assert_eq!(suggestion.suggested, vec!["bash".to_string(), "-lc".to_string(), "ls".to_string()]);
+        assert_eq!(
+            suggestion.suggested,
+            vec!["bash".to_string(), "-lc".to_string(), "ls".to_string()]
+        );
     }
 
     #[test]
@@ -10899,14 +11430,17 @@ mod command_guard_detection_tests {
         let argv = vec![
             "bash".to_string(),
             "-lc".to_string(),
-            "cat <<'EOF' > code-rs/git-tooling/Cargo.toml\n[package]\nname = \"demo\"\nEOF".to_string(),
+            "cat <<'EOF' > code-rs/git-tooling/Cargo.toml\n[package]\nname = \"demo\"\nEOF"
+                .to_string(),
         ];
 
         let suggestion = detect_cat_write(&argv).expect("should flag cat write");
         assert_eq!(suggestion.label, "original_script");
-        assert!(suggestion
-            .original_value
-            .contains("cat <<'EOF' > code-rs/git-tooling/Cargo.toml"));
+        assert!(
+            suggestion
+                .original_value
+                .contains("cat <<'EOF' > code-rs/git-tooling/Cargo.toml")
+        );
     }
 
     #[test]
@@ -10936,7 +11470,8 @@ mod command_guard_detection_tests {
         let argv = vec![
             "bash".to_string(),
             "-lc".to_string(),
-            "python3 - <<'PY'\nfrom pathlib import Path\nPath('docs.txt').write_text('hello')\nPY".to_string(),
+            "python3 - <<'PY'\nfrom pathlib import Path\nPath('docs.txt').write_text('hello')\nPY"
+                .to_string(),
         ];
 
         let suggestion = detect_python_write(&argv).expect("should flag python write");
@@ -10971,16 +11506,14 @@ mod command_guard_detection_tests {
 
 #[cfg(test)]
 mod cleanup_tests {
-    use super::*;
     use super::super::session::prune_history_items;
-    use code_protocol::protocol::{
-        BROWSER_SNAPSHOT_CLOSE_TAG,
-        BROWSER_SNAPSHOT_OPEN_TAG,
-        ENVIRONMENT_CONTEXT_CLOSE_TAG,
-        ENVIRONMENT_CONTEXT_DELTA_CLOSE_TAG,
-        ENVIRONMENT_CONTEXT_DELTA_OPEN_TAG,
-        ENVIRONMENT_CONTEXT_OPEN_TAG,
-    };
+    use super::*;
+    use code_protocol::protocol::BROWSER_SNAPSHOT_CLOSE_TAG;
+    use code_protocol::protocol::BROWSER_SNAPSHOT_OPEN_TAG;
+    use code_protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
+    use code_protocol::protocol::ENVIRONMENT_CONTEXT_DELTA_CLOSE_TAG;
+    use code_protocol::protocol::ENVIRONMENT_CONTEXT_DELTA_OPEN_TAG;
+    use code_protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
 
     fn make_text_message(text: &str) -> ResponseItem {
         ResponseItem::Message {
@@ -11114,8 +11647,9 @@ pub(super) fn debug_history(label: &str, items: &[ResponseItem]) {
                 let text = content
                     .iter()
                     .filter_map(|c| match c {
-                        ContentItem::InputText { text }
-                        | ContentItem::OutputText { text } => Some(text.as_str()),
+                        ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                            Some(text.as_str())
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -11130,7 +11664,10 @@ pub(super) fn debug_history(label: &str, items: &[ResponseItem]) {
     if std::env::var_os("CODEX_COMPACT_TRACE").is_some() {
         eprintln!("[compact_history] {} => [{}]", label, rendered);
     }
-    info!(target = "code_core::compact_history", "{} => [{}]", label, rendered);
+    info!(
+        target = "code_core::compact_history",
+        "{} => [{}]", label, rendered
+    );
 }
 
 #[derive(Debug)]
@@ -11163,7 +11700,9 @@ pub(super) fn process_rollout_env_item(ctx: &mut TimelineReplayContext, item: &R
         match ctx.timeline.record_snapshot(snapshot.clone()) {
             Ok(true) => crate::telemetry::global_telemetry().record_snapshot_commit(),
             Ok(false) => crate::telemetry::global_telemetry().record_dedup_drop(),
-            Err(err) => tracing::warn!("env_ctx_v2: failed to record snapshot during replay: {err}"),
+            Err(err) => {
+                tracing::warn!("env_ctx_v2: failed to record snapshot during replay: {err}")
+            }
         }
 
         ctx.last_snapshot = Some(snapshot);
@@ -11201,14 +11740,14 @@ pub(super) fn process_rollout_env_item(ctx: &mut TimelineReplayContext, item: &R
             match ctx.timeline.record_snapshot(next_snapshot.clone()) {
                 Ok(true) => crate::telemetry::global_telemetry().record_snapshot_commit(),
                 Ok(false) => crate::telemetry::global_telemetry().record_dedup_drop(),
-                Err(err) => tracing::warn!("env_ctx_v2: failed to record snapshot during replay: {err}"),
+                Err(err) => {
+                    tracing::warn!("env_ctx_v2: failed to record snapshot during replay: {err}")
+                }
             }
 
             ctx.last_snapshot = Some(next_snapshot);
         } else {
-            tracing::warn!(
-                "env_ctx_v2: encountered delta before baseline while replaying rollout"
-            );
+            tracing::warn!("env_ctx_v2: encountered delta before baseline while replaying rollout");
             crate::telemetry::global_telemetry().record_delta_gap();
         }
         return;
@@ -11343,8 +11882,10 @@ fn parse_legacy_status_snapshot(item: &ResponseItem) -> Option<EnvironmentContex
 
 #[cfg(test)]
 mod tests {
-    use super::{format_exec_output_with_limit, TRUNCATION_MARKER};
-    use crate::exec::{ExecToolCallOutput, StreamOutput};
+    use super::TRUNCATION_MARKER;
+    use super::format_exec_output_with_limit;
+    use crate::exec::ExecToolCallOutput;
+    use crate::exec::StreamOutput;
     use serde_json::Value;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -11366,8 +11907,7 @@ mod tests {
         let output = "line\n".repeat(200);
         let exec_output = make_exec_output(output);
 
-        let payload =
-            format_exec_output_with_limit(dir.path(), "sub", "call", &exec_output, 64);
+        let payload = format_exec_output_with_limit(dir.path(), "sub", "call", &exec_output, 64);
         let parsed: Value = serde_json::from_str(&payload).expect("parse payload");
         let content = parsed
             .get("output")

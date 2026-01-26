@@ -21,11 +21,11 @@ use code_core::protocol::PatchApplyBeginEvent;
 use code_core::protocol::PatchApplyEndEvent;
 use code_core::protocol::SessionConfiguredEvent;
 use code_core::protocol::TaskCompleteEvent;
-use code_protocol::protocol::TurnAbortReason;
 use code_core::protocol::TurnDiffEvent;
 use code_core::protocol::WebSearchBeginEvent;
 use code_core::protocol::WebSearchCompleteEvent;
 use code_protocol::num_format::format_with_separators;
+use code_protocol::protocol::TurnAbortReason;
 use owo_colors::OwoColorize;
 use owo_colors::Style;
 use shlex::try_join;
@@ -129,7 +129,6 @@ impl EventProcessorWithHumanOutput {
             }
         }
     }
-
 }
 
 struct ExecCommandBegin {
@@ -158,11 +157,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
     /// screen.
     fn print_config_summary(&mut self, config: &Config, prompt: &str) {
         const VERSION: &str = env!("CARGO_PKG_VERSION");
-        ts_println!(
-            self,
-            "OpenAI Codex v{} (research preview)",
-            VERSION
-        );
+        ts_println!(self, "OpenAI Codex v{} (research preview)", VERSION);
 
         // Show which binary is being used to execute sub-agents so users can
         // confirm path mismatches when testing new builds.
@@ -339,7 +334,13 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 );
             }
             EventMsg::ExecCommandOutputDelta(_) => {}
-            EventMsg::ExecCommandEnd(ExecCommandEndEvent { call_id, stdout, stderr, duration, exit_code }) => {
+            EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id,
+                stdout,
+                stderr,
+                duration,
+                exit_code,
+            }) => {
                 let exec_command = self.call_id_to_command.remove(&call_id);
                 let (duration, call) = if let Some(ExecCommandBegin { command, .. }) = exec_command
                 {
@@ -586,7 +587,11 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 }
             }
             EventMsg::SessionConfigured(session_configured_event) => {
-                let SessionConfiguredEvent { session_id: conversation_id, model, .. } = session_configured_event;
+                let SessionConfiguredEvent {
+                    session_id: conversation_id,
+                    model,
+                    ..
+                } = session_configured_event;
 
                 ts_println!(
                     self,
@@ -681,12 +686,12 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     "review".style(self.magenta),
                     "started".style(self.bold),
                 );
-                if let Some(scope) = request
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.scope.as_ref())
-                {
-                    println!("{} {}", "scope:".style(self.dimmed), scope.style(self.dimmed));
+                if let Some(scope) = request.metadata.as_ref().and_then(|m| m.scope.as_ref()) {
+                    println!(
+                        "{} {}",
+                        "scope:".style(self.dimmed),
+                        scope.style(self.dimmed)
+                    );
                 }
                 if !request.user_facing_hint.trim().is_empty() {
                     println!("{}", request.user_facing_hint.trim().style(self.dimmed));
@@ -735,10 +740,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                         }
 
                         if output.overall_confidence_score > 0.0 {
-                            println!(
-                                "confidence: {:.1}",
-                                output.overall_confidence_score,
-                            );
+                            println!("confidence: {:.1}", output.overall_confidence_score,);
                         }
                     }
                     None => println!("{}", "review ended without results".style(self.dimmed)),

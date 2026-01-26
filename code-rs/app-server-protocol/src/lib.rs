@@ -2,70 +2,66 @@
 //! This crate re-exports the MCP protocol surface that downstream crates
 //! still depend on while the fork finishes migrating to the new structure.
 
-pub use code_protocol::mcp_protocol::{
-    self,
-    AddConversationListenerParams,
-    AddConversationSubscriptionResponse,
-    ApplyPatchApprovalParams,
-    ApplyPatchApprovalResponse,
-    ArchiveConversationParams,
-    ArchiveConversationResponse,
-    AuthMode,
-    CancelLoginChatGptParams,
-    CancelLoginChatGptResponse,
-    ClientInfo,
-    ClientNotification,
-    ClientRequest,
-    ConversationId,
-    ExecCommandApprovalParams,
-    ExecCommandApprovalResponse,
-    GetAuthStatusParams,
-    GetAuthStatusResponse,
-    GetUserAgentResponse,
-    GetUserSavedConfigResponse,
-    GitDiffToRemoteParams,
-    GitDiffToRemoteResponse,
-    GitSha,
-    InitializeParams,
-    InputItem,
-    InterruptConversationParams,
-    InterruptConversationResponse,
-    ListConversationsParams,
-    ListConversationsResponse,
-    LoginApiKeyParams,
-    LoginChatGptCompleteNotification,
-    LoginChatGptResponse,
-    LogoutChatGptParams,
-    LogoutChatGptResponse,
-    NewConversationParams,
-    NewConversationResponse,
-    Profile,
-    RemoveConversationListenerParams,
-    RemoveConversationSubscriptionResponse,
-    ResumeConversationParams,
-    ResumeConversationResponse,
-    SandboxSettings,
-    SendUserMessageParams,
-    SendUserMessageResponse,
-    SendUserTurnParams,
-    SendUserTurnResponse,
-    ServerNotification,
-    ServerRequest,
-    SessionConfiguredNotification,
-    SetDefaultModelParams,
-    SetDefaultModelResponse,
-    Tools,
-    UserInfoResponse,
-    UserSavedConfig,
-    APPLY_PATCH_APPROVAL_METHOD,
-    EXEC_COMMAND_APPROVAL_METHOD,
-};
-pub use mcp_types::{
-    JSONRPCError,
-    JSONRPCErrorError,
-    JSONRPCMessage,
-    JSONRPCNotification,
-    JSONRPCRequest,
-    JSONRPCResponse,
-    RequestId,
-};
+pub use code_protocol::mcp_protocol::APPLY_PATCH_APPROVAL_METHOD;
+pub use code_protocol::mcp_protocol::AddConversationListenerParams;
+pub use code_protocol::mcp_protocol::AddConversationSubscriptionResponse;
+pub use code_protocol::mcp_protocol::ApplyPatchApprovalParams;
+pub use code_protocol::mcp_protocol::ApplyPatchApprovalResponse;
+pub use code_protocol::mcp_protocol::ArchiveConversationParams;
+pub use code_protocol::mcp_protocol::ArchiveConversationResponse;
+pub use code_protocol::mcp_protocol::AuthMode;
+pub use code_protocol::mcp_protocol::CancelLoginChatGptParams;
+pub use code_protocol::mcp_protocol::CancelLoginChatGptResponse;
+pub use code_protocol::mcp_protocol::ClientInfo;
+pub use code_protocol::mcp_protocol::ClientNotification;
+pub use code_protocol::mcp_protocol::ClientRequest;
+pub use code_protocol::mcp_protocol::ConversationId;
+pub use code_protocol::mcp_protocol::EXEC_COMMAND_APPROVAL_METHOD;
+pub use code_protocol::mcp_protocol::ExecCommandApprovalParams;
+pub use code_protocol::mcp_protocol::ExecCommandApprovalResponse;
+pub use code_protocol::mcp_protocol::GetAuthStatusParams;
+pub use code_protocol::mcp_protocol::GetAuthStatusResponse;
+pub use code_protocol::mcp_protocol::GetUserAgentResponse;
+pub use code_protocol::mcp_protocol::GetUserSavedConfigResponse;
+pub use code_protocol::mcp_protocol::GitDiffToRemoteParams;
+pub use code_protocol::mcp_protocol::GitDiffToRemoteResponse;
+pub use code_protocol::mcp_protocol::GitSha;
+pub use code_protocol::mcp_protocol::InitializeParams;
+pub use code_protocol::mcp_protocol::InputItem;
+pub use code_protocol::mcp_protocol::InterruptConversationParams;
+pub use code_protocol::mcp_protocol::InterruptConversationResponse;
+pub use code_protocol::mcp_protocol::ListConversationsParams;
+pub use code_protocol::mcp_protocol::ListConversationsResponse;
+pub use code_protocol::mcp_protocol::LoginApiKeyParams;
+pub use code_protocol::mcp_protocol::LoginChatGptCompleteNotification;
+pub use code_protocol::mcp_protocol::LoginChatGptResponse;
+pub use code_protocol::mcp_protocol::LogoutChatGptParams;
+pub use code_protocol::mcp_protocol::LogoutChatGptResponse;
+pub use code_protocol::mcp_protocol::NewConversationParams;
+pub use code_protocol::mcp_protocol::NewConversationResponse;
+pub use code_protocol::mcp_protocol::Profile;
+pub use code_protocol::mcp_protocol::RemoveConversationListenerParams;
+pub use code_protocol::mcp_protocol::RemoveConversationSubscriptionResponse;
+pub use code_protocol::mcp_protocol::ResumeConversationParams;
+pub use code_protocol::mcp_protocol::ResumeConversationResponse;
+pub use code_protocol::mcp_protocol::SandboxSettings;
+pub use code_protocol::mcp_protocol::SendUserMessageParams;
+pub use code_protocol::mcp_protocol::SendUserMessageResponse;
+pub use code_protocol::mcp_protocol::SendUserTurnParams;
+pub use code_protocol::mcp_protocol::SendUserTurnResponse;
+pub use code_protocol::mcp_protocol::ServerNotification;
+pub use code_protocol::mcp_protocol::ServerRequest;
+pub use code_protocol::mcp_protocol::SessionConfiguredNotification;
+pub use code_protocol::mcp_protocol::SetDefaultModelParams;
+pub use code_protocol::mcp_protocol::SetDefaultModelResponse;
+pub use code_protocol::mcp_protocol::Tools;
+pub use code_protocol::mcp_protocol::UserInfoResponse;
+pub use code_protocol::mcp_protocol::UserSavedConfig;
+pub use code_protocol::mcp_protocol::{self};
+pub use mcp_types::JSONRPCError;
+pub use mcp_types::JSONRPCErrorError;
+pub use mcp_types::JSONRPCMessage;
+pub use mcp_types::JSONRPCNotification;
+pub use mcp_types::JSONRPCRequest;
+pub use mcp_types::JSONRPCResponse;
+pub use mcp_types::RequestId;

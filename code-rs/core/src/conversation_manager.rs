@@ -1,9 +1,9 @@
 use crate::AuthManager;
 use crate::CodexAuth;
+use crate::code_conversation::CodexConversation;
 use crate::codex::Codex;
 use crate::codex::CodexSpawnOk;
 use crate::codex::INITIAL_SUBMIT_ID;
-use crate::code_conversation::CodexConversation;
 use crate::config::Config;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
@@ -12,10 +12,10 @@ use crate::protocol::EventMsg;
 use crate::protocol::SessionConfiguredEvent;
 use crate::rollout::RolloutRecorder;
 use code_protocol::ConversationId;
-use code_protocol::protocol::SessionSource;
 use code_protocol::models::ResponseItem;
 use code_protocol::protocol::InitialHistory;
 use code_protocol::protocol::RolloutItem;
+use code_protocol::protocol::SessionSource;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -169,7 +169,9 @@ impl ConversationManager {
 
         // If there is no prior history to seed, just start a fresh conversation.
         if matches!(history, InitialHistory::New) {
-            return self.spawn_conversation(config, self.auth_manager.clone()).await;
+            return self
+                .spawn_conversation(config, self.auth_manager.clone())
+                .await;
         }
 
         // Otherwise, create a temporary rollout with the truncated items and resume from it.

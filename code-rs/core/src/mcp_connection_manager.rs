@@ -30,7 +30,8 @@ use tracing::warn;
 
 use crate::config_types::McpServerConfig;
 use crate::config_types::McpServerTransportConfig;
-use crate::protocol::{McpServerFailure, McpServerFailurePhase};
+use crate::protocol::McpServerFailure;
+use crate::protocol::McpServerFailurePhase;
 
 /// Delimiter used to separate the server name from the tool name in a fully
 /// qualified tool name.
@@ -245,7 +246,10 @@ impl McpConnectionManager {
                 );
                 errors.insert(
                     server_name,
-                    McpServerFailure { phase: McpServerFailurePhase::Start, message },
+                    McpServerFailure {
+                        phase: McpServerFailurePhase::Start,
+                        message,
+                    },
                 );
                 continue;
             }
@@ -364,12 +368,15 @@ impl McpConnectionManager {
         server_names.sort();
         let failures = errors.clone();
 
-        Ok((Self {
-            clients: RwLock::new(clients),
-            tools,
-            server_names,
-            failures,
-        }, errors))
+        Ok((
+            Self {
+                clients: RwLock::new(clients),
+                tools,
+                server_names,
+                failures,
+            },
+            errors,
+        ))
     }
 
     /// Returns a single map that contains **all** tools. Each key is the
@@ -444,7 +451,6 @@ impl McpConnectionManager {
             managed.shutdown().await;
         }
     }
-
 }
 
 impl ManagedClient {
@@ -500,9 +506,7 @@ async fn list_all_tools(
                 }
             }
             Err(err) => {
-                warn!(
-                    "Failed to list tools for MCP server '{server_name}': {err:#?}"
-                );
+                warn!("Failed to list tools for MCP server '{server_name}': {err:#?}");
                 errors.insert(
                     server_name,
                     McpServerFailure {
@@ -664,7 +668,10 @@ mod tests {
             .expect("missing executable should be reported under server name");
         let msg = err.message.as_str();
 
-        assert!(msg.contains("context7-mcp"), "error should mention the server name");
+        assert!(
+            msg.contains("context7-mcp"),
+            "error should mention the server name"
+        );
         assert!(
             msg.contains("nonexistent-cmd"),
             "error should include the missing command, got: {msg}"

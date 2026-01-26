@@ -2,7 +2,8 @@
 #![cfg(feature = "code-fork")]
 
 use crate::app_event_sender::AppEventSender;
-use code_core::protocol::{BrowserScreenshotUpdateEvent, RateLimitSnapshotEvent};
+use code_core::protocol::BrowserScreenshotUpdateEvent;
+use code_core::protocol::RateLimitSnapshotEvent;
 
 /// Forward a rate-limit snapshot into the main event loop.
 #[inline]

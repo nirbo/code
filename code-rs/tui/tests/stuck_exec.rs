@@ -1,23 +1,22 @@
-use code_core::protocol::{
-    AgentMessageEvent,
-    AgentMessageDeltaEvent,
-    CustomToolCallBeginEvent,
-    CustomToolCallEndEvent,
-    Event,
-    EventMsg,
-    ErrorEvent,
-    ExecCommandBeginEvent,
-    ExecCommandEndEvent,
-    TaskCompleteEvent,
-    AgentReasoningDeltaEvent,
-    McpInvocation,
-    McpToolCallBeginEvent,
-    OrderMeta,
-    PatchApplyBeginEvent,
-    PatchApplyEndEvent,
-};
 use code_core::parse_command::ParsedCommand as CoreParsedCommand;
-use code_tui::test_helpers::{render_chat_widget_to_vt100, ChatWidgetHarness};
+use code_core::protocol::AgentMessageDeltaEvent;
+use code_core::protocol::AgentMessageEvent;
+use code_core::protocol::AgentReasoningDeltaEvent;
+use code_core::protocol::CustomToolCallBeginEvent;
+use code_core::protocol::CustomToolCallEndEvent;
+use code_core::protocol::ErrorEvent;
+use code_core::protocol::Event;
+use code_core::protocol::EventMsg;
+use code_core::protocol::ExecCommandBeginEvent;
+use code_core::protocol::ExecCommandEndEvent;
+use code_core::protocol::McpInvocation;
+use code_core::protocol::McpToolCallBeginEvent;
+use code_core::protocol::OrderMeta;
+use code_core::protocol::PatchApplyBeginEvent;
+use code_core::protocol::PatchApplyEndEvent;
+use code_core::protocol::TaskCompleteEvent;
+use code_tui::test_helpers::ChatWidgetHarness;
+use code_tui::test_helpers::render_chat_widget_to_vt100;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -750,7 +749,10 @@ fn background_style_exec_end_with_zero_seq_does_not_get_stuck() {
             break;
         }
         if Instant::now() >= deadline {
-            panic!("exec with zero seq end should complete after flush:\n{}", output);
+            panic!(
+                "exec with zero seq end should complete after flush:\n{}",
+                output
+            );
         }
     }
 }

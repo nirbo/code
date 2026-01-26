@@ -3,8 +3,12 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use code_core::protocol::{AgentMessageEvent, Event, EventMsg, OrderMeta};
-use code_tui::test_helpers::{render_chat_widget_to_vt100, ChatWidgetHarness};
+use code_core::protocol::AgentMessageEvent;
+use code_core::protocol::Event;
+use code_core::protocol::EventMsg;
+use code_core::protocol::OrderMeta;
+use code_tui::test_helpers::ChatWidgetHarness;
+use code_tui::test_helpers::render_chat_widget_to_vt100;
 
 #[test]
 fn mid_turn_answer_suppresses_bullet_gutter() {

@@ -1,10 +1,5 @@
 use std::path::PathBuf;
 
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget, WidgetRef, Wrap};
 use code_core::config::set_project_access_mode;
 use code_core::config::set_project_trusted;
 use code_core::protocol::AskForApproval;
@@ -12,6 +7,17 @@ use code_core::protocol::SandboxPolicy;
 use code_protocol::config_types::SandboxMode as SandboxModeCfg;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::text::Span;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
+use ratatui::widgets::WidgetRef;
+use ratatui::widgets::Wrap;
 
 use crate::colors;
 

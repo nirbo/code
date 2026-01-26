@@ -45,4 +45,3 @@ pub struct RequestUserInputEvent {
     pub turn_id: String,
     pub questions: Vec<RequestUserInputQuestion>,
 }
-

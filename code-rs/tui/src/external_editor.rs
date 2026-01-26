@@ -67,14 +67,15 @@ pub(crate) fn run_editor(initial: &str) -> Result<String, ExternalEditorError> {
         return Err(ExternalEditorError::NonZeroExit(format!("{status:?}")));
     }
 
-    fs::read_to_string(&path)
-        .map_err(|e| ExternalEditorError::ReadFailed(e.to_string()))
+    fs::read_to_string(&path).map_err(|e| ExternalEditorError::ReadFailed(e.to_string()))
 }
 
 fn resolve_editor_command() -> Result<Vec<String>, ExternalEditorError> {
     let visual = env::var("VISUAL").ok().filter(|val| !val.trim().is_empty());
     let editor = env::var("EDITOR").ok().filter(|val| !val.trim().is_empty());
-    let raw = visual.or(editor).ok_or(ExternalEditorError::MissingEditor)?;
+    let raw = visual
+        .or(editor)
+        .ok_or(ExternalEditorError::MissingEditor)?;
     parse_editor_command(&raw)
 }
 

@@ -1,12 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io;
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use code_app_server_protocol::AuthMode;
 
-use crate::auth;
 use crate::account_usage;
+use crate::auth;
 use crate::auth_accounts;
 
 #[derive(Debug, Default)]
@@ -26,8 +28,7 @@ impl RateLimitSwitchState {
         self.tried_accounts.insert(account_id.to_string());
 
         if mode == AuthMode::ChatGPT {
-            self.limited_chatgpt_accounts
-                .insert(account_id.to_string());
+            self.limited_chatgpt_accounts.insert(account_id.to_string());
         }
 
         if let Some(until) = blocked_until {
@@ -79,11 +80,7 @@ fn usage_used_percent(snapshot: &account_usage::StoredRateLimitSnapshot) -> Opti
     let used = snapshot
         .primary_used_percent
         .max(snapshot.secondary_used_percent);
-    if used.is_finite() {
-        Some(used)
-    } else {
-        None
-    }
+    if used.is_finite() { Some(used) } else { None }
 }
 
 fn is_blocked(now: DateTime<Utc>, blocked_until: Option<DateTime<Utc>>) -> bool {
@@ -138,7 +135,11 @@ pub(crate) fn select_next_account_id(
         let blocked_until = state
             .blocked_until(&account.id)
             .into_iter()
-            .chain(snapshot_map.get(&account.id).and_then(usage_reset_blocked_until))
+            .chain(
+                snapshot_map
+                    .get(&account.id)
+                    .and_then(usage_reset_blocked_until),
+            )
             .max();
         if is_blocked(now, blocked_until) {
             continue;
@@ -173,7 +174,11 @@ pub(crate) fn select_next_account_id(
         let blocked_until = state
             .blocked_until(&account.id)
             .into_iter()
-            .chain(snapshot_map.get(&account.id).and_then(usage_reset_blocked_until))
+            .chain(
+                snapshot_map
+                    .get(&account.id)
+                    .and_then(usage_reset_blocked_until),
+            )
             .max();
         let blocked = is_blocked(now, blocked_until);
         let exhausted = state.limited_chatgpt_accounts.contains(&account.id);
@@ -227,7 +232,8 @@ pub fn switch_active_account_on_rate_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::token_data::{IdTokenInfo, TokenData};
+    use crate::token_data::IdTokenInfo;
+    use crate::token_data::TokenData;
     use base64::Engine;
     use chrono::TimeZone;
     use serde::Serialize;
@@ -300,14 +306,9 @@ mod tests {
 
         let mut state = RateLimitSwitchState::default();
         state.mark_limited(&a.id, AuthMode::ChatGPT, None);
-        let next = select_next_account_id(
-            home.path(),
-            &state,
-            false,
-            fixed_now(),
-            Some(a.id.as_str()),
-        )
-        .expect("select");
+        let next =
+            select_next_account_id(home.path(), &state, false, fixed_now(), Some(a.id.as_str()))
+                .expect("select");
         assert_eq!(next.as_deref(), Some(b.id.as_str()));
     }
 
@@ -338,9 +339,8 @@ mod tests {
 
         let mut state = RateLimitSwitchState::default();
         state.mark_limited(&a.id, AuthMode::ChatGPT, None);
-        let next =
-            select_next_account_id(home.path(), &state, false, now, Some(a.id.as_str()))
-                .expect("select");
+        let next = select_next_account_id(home.path(), &state, false, now, Some(a.id.as_str()))
+            .expect("select");
         assert!(next.is_none());
     }
 
@@ -363,13 +363,9 @@ mod tests {
             false,
         )
         .expect("insert b");
-        let api = auth_accounts::upsert_api_key_account(
-            home.path(),
-            "sk-test".to_string(),
-            None,
-            false,
-        )
-        .expect("insert api");
+        let api =
+            auth_accounts::upsert_api_key_account(home.path(), "sk-test".to_string(), None, false)
+                .expect("insert api");
 
         let now = fixed_now();
         let mut state = RateLimitSwitchState::default();
@@ -409,14 +405,9 @@ mod tests {
         let mut state = RateLimitSwitchState::default();
         state.mark_limited(&b.id, AuthMode::ChatGPT, None);
 
-        let next = select_next_account_id(
-            home.path(),
-            &state,
-            false,
-            fixed_now(),
-            Some(b.id.as_str()),
-        )
-        .expect("select");
+        let next =
+            select_next_account_id(home.path(), &state, false, fixed_now(), Some(b.id.as_str()))
+                .expect("select");
 
         assert_eq!(next.as_deref(), Some(a.id.as_str()));
     }

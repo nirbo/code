@@ -3,8 +3,8 @@ use code_arg0::arg0_dispatch_or_else;
 use code_common::CliConfigOverrides;
 use code_tui::Cli;
 use code_tui::ExitSummary;
-use code_tui::run_main;
 use code_tui::resume_command_name;
+use code_tui::run_main;
 
 #[derive(Parser, Debug)]
 struct TopCli {

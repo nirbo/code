@@ -15,9 +15,8 @@ const GPT_5_1_CODEX_MAX_INSTRUCTIONS: &str = include_str!("../gpt-5.1-codex-max_
 const GLM_4_7_INSTRUCTIONS: &str = include_str!("../glm_4_7_prompt.md");
 const GPT_5_2_CODEX_INSTRUCTIONS: &str = include_str!("../gpt-5.2-codex_prompt.md");
 
-const GPT_5_2_CODEX_INSTRUCTIONS_TEMPLATE: &str = include_str!(
-    "../templates/model_instructions/gpt-5.2-codex_instructions_template.md",
-);
+const GPT_5_2_CODEX_INSTRUCTIONS_TEMPLATE: &str =
+    include_str!("../templates/model_instructions/gpt-5.2-codex_instructions_template.md",);
 const PERSONALITY_FRIENDLY: &str = include_str!("../templates/personalities/friendly.md");
 const PERSONALITY_PRAGMATIC: &str = include_str!("../templates/personalities/pragmatic.md");
 

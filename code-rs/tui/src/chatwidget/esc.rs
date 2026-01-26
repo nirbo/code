@@ -1,7 +1,11 @@
 use crossterm::event::KeyEvent;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
-use super::{ChatWidget, AUTO_ESC_EXIT_HINT, AUTO_ESC_EXIT_HINT_DOUBLE, DOUBLE_ESC_HINT};
+use super::AUTO_ESC_EXIT_HINT;
+use super::AUTO_ESC_EXIT_HINT_DOUBLE;
+use super::ChatWidget;
+use super::DOUBLE_ESC_HINT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EscIntent {
@@ -326,7 +330,9 @@ impl ChatWidget<'_> {
                 }
                 EscIntent::CancelTask | EscIntent::ClearComposer => {
                     let route_after = self.describe_esc_context();
-                    if route_after.intent == EscIntent::ShowUndoHint && route_after.allows_double_esc {
+                    if route_after.intent == EscIntent::ShowUndoHint
+                        && route_after.allows_double_esc
+                    {
                         *last_esc_time = Some(now);
                     } else {
                         *last_esc_time = None;
@@ -367,10 +373,13 @@ impl ChatWidget<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::chatwidget::ExecCallId;
+    use crate::chatwidget::RunningCommand;
     use crate::chatwidget::message::UserMessage;
     use crate::chatwidget::smoke_helpers::ChatWidgetHarness;
-    use crate::chatwidget::{ExecCallId, RunningCommand};
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyEvent;
+    use crossterm::event::KeyModifiers;
 
     fn make_running_command() -> RunningCommand {
         RunningCommand {

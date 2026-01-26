@@ -8,8 +8,12 @@ use code_protocol::openai_models::ModelInfo;
 use code_protocol::openai_models::ModelsResponse;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
-use wiremock::matchers::{header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::header;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
 
 fn skip_if_no_network() -> bool {
     std::env::var(code_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok()
@@ -181,10 +185,7 @@ async fn refresh_remote_models_refetches_when_cache_stale() {
     let models = manager.remote_models_snapshot().await;
     assert_eq!(models.len(), 1);
     assert_eq!(models[0].slug, "fresh");
-    assert_eq!(
-        server.received_requests().await.expect("requests").len(),
-        1
-    );
+    assert_eq!(server.received_requests().await.expect("requests").len(), 1);
 }
 
 #[tokio::test]
@@ -276,9 +277,7 @@ async fn construct_model_family_applies_remote_overrides() {
     }))
     .expect("model info");
 
-    let response = ModelsResponse {
-        models: vec![info],
-    };
+    let response = ModelsResponse { models: vec![info] };
 
     Mock::given(method("GET"))
         .and(path("/models"))

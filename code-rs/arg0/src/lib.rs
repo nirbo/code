@@ -2,8 +2,8 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 
-use code_core::config::resolve_code_path_for_read;
 use code_core::CODEX_APPLY_PATCH_ARG1;
+use code_core::config::resolve_code_path_for_read;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
@@ -130,9 +130,13 @@ fn load_dotenv() {
         for (key, value) in iter.into_iter().flatten() {
             let upper = key.to_ascii_uppercase();
             // Never allow CODEX_* to be set from .env files for safety.
-            if upper.starts_with(ILLEGAL_ENV_VAR_PREFIX) && upper != "CODEX_HOME" { continue; }
+            if upper.starts_with(ILLEGAL_ENV_VAR_PREFIX) && upper != "CODEX_HOME" {
+                continue;
+            }
             // Always ignore provider keys from project .env (must be set globally or in shell).
-            if upper == "OPENAI_API_KEY" || upper == "AZURE_OPENAI_API_KEY" { continue; }
+            if upper == "OPENAI_API_KEY" || upper == "AZURE_OPENAI_API_KEY" {
+                continue;
+            }
             // Safe: still single-threaded during startup.
             unsafe { std::env::set_var(&key, &value) };
         }
@@ -222,7 +226,8 @@ fn prepend_path_entry_for_apply_patch() -> std::io::Result<TempDir> {
         existing_path = join_path_env(&existing_path, &default_path_env_var(), PATH_SEPARATOR);
     }
 
-    let updated_path_env_var = join_path_env(&path_element.to_string(), &existing_path, PATH_SEPARATOR);
+    let updated_path_env_var =
+        join_path_env(&path_element.to_string(), &existing_path, PATH_SEPARATOR);
 
     unsafe {
         std::env::set_var("PATH", updated_path_env_var);

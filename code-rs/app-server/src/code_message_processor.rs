@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use code_core::AuthManager;
 use code_core::CodexConversation;
@@ -26,14 +27,12 @@ use uuid::Uuid;
 
 use crate::error_code::INTERNAL_ERROR_CODE;
 use crate::error_code::INVALID_REQUEST_ERROR_CODE;
-use code_utils_json_to_toml::json_to_toml;
+use crate::fuzzy_file_search::run_fuzzy_file_search;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::OutgoingNotification;
-use crate::fuzzy_file_search::run_fuzzy_file_search;
-use code_protocol::protocol::TurnAbortReason;
+use code_core::protocol as core_protocol;
 use code_core::protocol::InputItem as CoreInputItem;
 use code_core::protocol::Op;
-use code_core::protocol as core_protocol;
 use code_protocol::mcp_protocol::APPLY_PATCH_APPROVAL_METHOD;
 use code_protocol::mcp_protocol::AddConversationListenerParams;
 use code_protocol::mcp_protocol::AddConversationSubscriptionResponse;
@@ -47,6 +46,8 @@ use code_protocol::mcp_protocol::ExecCommandApprovalResponse;
 use code_protocol::mcp_protocol::InputItem as WireInputItem;
 use code_protocol::mcp_protocol::InterruptConversationParams;
 use code_protocol::mcp_protocol::InterruptConversationResponse;
+use code_protocol::protocol::TurnAbortReason;
+use code_utils_json_to_toml::json_to_toml;
 // Unused login-related and diff param imports removed
 use code_protocol::mcp_protocol::GitDiffToRemoteResponse;
 use code_protocol::mcp_protocol::NewConversationParams;
@@ -318,7 +319,9 @@ impl CodexMessageProcessor {
 
         // Submit the interrupt and respond immediately (core does not emit a dedicated event).
         let _ = conversation.submit(Op::Interrupt).await;
-        let response = InterruptConversationResponse { abort_reason: TurnAbortReason::Interrupted };
+        let response = InterruptConversationResponse {
+            abort_reason: TurnAbortReason::Interrupted,
+        };
         self.outgoing.send_response(request_id, response).await;
     }
 
@@ -490,11 +493,7 @@ impl CodexMessageProcessor {
     // per‑turn reconfiguration here (model, cwd, approval, sandbox) to avoid
     // destabilizing the session. This preserves behavior and acks the request
     // so clients using the new method continue to function.
-    async fn send_user_turn_compat(
-        &self,
-        request_id: RequestId,
-        params: SendUserTurnParams,
-    ) {
+    async fn send_user_turn_compat(&self, request_id: RequestId, params: SendUserTurnParams) {
         let SendUserTurnParams {
             conversation_id,
             items,
@@ -534,7 +533,9 @@ impl CodexMessageProcessor {
             .await;
 
         // Acknowledge.
-        self.outgoing.send_response(request_id, SendUserTurnResponse {}).await;
+        self.outgoing
+            .send_response(request_id, SendUserTurnResponse {})
+            .await;
     }
 }
 
@@ -545,7 +546,9 @@ async fn apply_bespoke_event_handling(
     outgoing: Arc<OutgoingMessageSender>,
     _pending_interrupts: Arc<Mutex<HashMap<Uuid, Vec<RequestId>>>>,
 ) {
-    let Event { id: _event_id, msg, .. } = event;
+    let Event {
+        id: _event_id, msg, ..
+    } = event;
     match msg {
         EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
             call_id,
@@ -562,21 +565,21 @@ async fn apply_bespoke_event_handling(
                             code_protocol::protocol::FileChange::Add { content }
                         }
                         code_core::protocol::FileChange::Delete => {
-                            code_protocol::protocol::FileChange::Delete { content: String::new() }
+                            code_protocol::protocol::FileChange::Delete {
+                                content: String::new(),
+                            }
                         }
                         code_core::protocol::FileChange::Update {
                             unified_diff,
                             move_path,
                             original_content,
                             new_content,
-                        } => {
-                            code_protocol::protocol::FileChange::Update {
-                                unified_diff,
-                                move_path,
-                                original_content,
-                                new_content,
-                            }
-                        }
+                        } => code_protocol::protocol::FileChange::Update {
+                            unified_diff,
+                            move_path,
+                            original_content,
+                            new_content,
+                        },
                     };
                     (p, mapped)
                 })
@@ -624,7 +627,6 @@ async fn apply_bespoke_event_handling(
             });
         }
         // No special handling needed for interrupts; responses are sent immediately.
-
         _ => {}
     }
 }
@@ -754,20 +756,34 @@ async fn on_exec_approval_response(
     }
 }
 
-fn map_review_decision_from_wire(d: code_protocol::protocol::ReviewDecision) -> core_protocol::ReviewDecision {
+fn map_review_decision_from_wire(
+    d: code_protocol::protocol::ReviewDecision,
+) -> core_protocol::ReviewDecision {
     match d {
-        code_protocol::protocol::ReviewDecision::Approved => core_protocol::ReviewDecision::Approved,
-        code_protocol::protocol::ReviewDecision::ApprovedForSession => core_protocol::ReviewDecision::ApprovedForSession,
+        code_protocol::protocol::ReviewDecision::Approved => {
+            core_protocol::ReviewDecision::Approved
+        }
+        code_protocol::protocol::ReviewDecision::ApprovedForSession => {
+            core_protocol::ReviewDecision::ApprovedForSession
+        }
         code_protocol::protocol::ReviewDecision::Denied => core_protocol::ReviewDecision::Denied,
         code_protocol::protocol::ReviewDecision::Abort => core_protocol::ReviewDecision::Abort,
     }
 }
 
-fn map_ask_for_approval_from_wire(a: code_protocol::protocol::AskForApproval) -> core_protocol::AskForApproval {
+fn map_ask_for_approval_from_wire(
+    a: code_protocol::protocol::AskForApproval,
+) -> core_protocol::AskForApproval {
     match a {
-        code_protocol::protocol::AskForApproval::UnlessTrusted => core_protocol::AskForApproval::UnlessTrusted,
-        code_protocol::protocol::AskForApproval::OnFailure => core_protocol::AskForApproval::OnFailure,
-        code_protocol::protocol::AskForApproval::OnRequest => core_protocol::AskForApproval::OnRequest,
+        code_protocol::protocol::AskForApproval::UnlessTrusted => {
+            core_protocol::AskForApproval::UnlessTrusted
+        }
+        code_protocol::protocol::AskForApproval::OnFailure => {
+            core_protocol::AskForApproval::OnFailure
+        }
+        code_protocol::protocol::AskForApproval::OnRequest => {
+            core_protocol::AskForApproval::OnRequest
+        }
         code_protocol::protocol::AskForApproval::Never => core_protocol::AskForApproval::Never,
     }
 }

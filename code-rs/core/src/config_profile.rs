@@ -1,10 +1,10 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use crate::config_types::Personality;
 use crate::config_types::ReasoningEffort;
 use crate::config_types::ReasoningSummary;
 use crate::config_types::TextVerbosity;
-use crate::config_types::Personality;
 use crate::protocol::AskForApproval;
 
 /// Collection of common configuration options that a user can define as a unit

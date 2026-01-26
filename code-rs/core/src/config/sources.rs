@@ -1,20 +1,22 @@
-use crate::config_loader::{load_config_as_toml_blocking, LoaderOverrides};
-use crate::config_types::{
-    AutoDriveContinueMode,
-    AutoDriveSettings,
-    CachedTerminalBackground,
-    McpServerConfig,
-    McpServerTransportConfig,
-    ReasoningEffort,
-    ThemeColors,
-    ThemeName,
-};
-use crate::protocol::{ApprovedCommandMatchKind, AskForApproval};
+use crate::config_loader::LoaderOverrides;
+use crate::config_loader::load_config_as_toml_blocking;
+use crate::config_types::AutoDriveContinueMode;
+use crate::config_types::AutoDriveSettings;
+use crate::config_types::CachedTerminalBackground;
+use crate::config_types::McpServerConfig;
+use crate::config_types::McpServerTransportConfig;
+use crate::config_types::ReasoningEffort;
+use crate::config_types::ThemeColors;
+use crate::config_types::ThemeName;
+use crate::protocol::ApprovedCommandMatchKind;
+use crate::protocol::AskForApproval;
 use code_protocol::config_types::SandboxMode;
 use dirs::home_dir;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use toml::Value as TomlValue;
@@ -170,25 +172,21 @@ pub async fn persist_model_selection(
     {
         let root = doc.as_table_mut();
         if let Some(profile_name) = profile {
-            let profiles_item = root
-                .entry("profiles")
-                .or_insert_with(|| {
-                    let mut table = TomlTable::new();
-                    table.set_implicit(true);
-                    TomlItem::Table(table)
-                });
+            let profiles_item = root.entry("profiles").or_insert_with(|| {
+                let mut table = TomlTable::new();
+                table.set_implicit(true);
+                TomlItem::Table(table)
+            });
 
             let profiles_table = profiles_item
                 .as_table_mut()
                 .expect("profiles table should be a table");
 
-            let profile_item = profiles_table
-                .entry(profile_name)
-                .or_insert_with(|| {
-                    let mut table = TomlTable::new();
-                    table.set_implicit(false);
-                    TomlItem::Table(table)
-                });
+            let profile_item = profiles_table.entry(profile_name).or_insert_with(|| {
+                let mut table = TomlTable::new();
+                table.set_implicit(false);
+                TomlItem::Table(table)
+            });
 
             let profile_table = profile_item
                 .as_table_mut()
@@ -201,8 +199,7 @@ pub async fn persist_model_selection(
             }
 
             if let Some(effort) = effort {
-                profile_table["model_reasoning_effort"] =
-                    toml_edit::value(effort.to_string());
+                profile_table["model_reasoning_effort"] = toml_edit::value(effort.to_string());
             } else {
                 profile_table.remove("model_reasoning_effort");
             }
@@ -220,8 +217,7 @@ pub async fn persist_model_selection(
             }
             match effort {
                 Some(effort) => {
-                    root["model_reasoning_effort"] =
-                        toml_edit::value(effort.to_string());
+                    root["model_reasoning_effort"] = toml_edit::value(effort.to_string());
                 }
                 None => {
                     root.remove("model_reasoning_effort");
@@ -487,7 +483,9 @@ pub fn set_custom_spinner(
     let node = &mut doc["tui"]["spinner"]["custom"][id];
     node["interval"] = toml_edit::value(interval as i64);
     let mut arr = toml_edit::Array::default();
-    for s in frames { arr.push(s.as_str()); }
+    for s in frames {
+        arr.push(s.as_str());
+    }
     node["frames"] = toml_edit::value(arr);
     node["label"] = toml_edit::value(label);
 
@@ -523,7 +521,9 @@ pub fn set_custom_theme(
         doc["tui"]["theme"]["name"] = toml_edit::value("custom");
     }
     doc["tui"]["theme"]["label"] = toml_edit::value(label);
-    if let Some(d) = is_dark { doc["tui"]["theme"]["is_dark"] = toml_edit::value(d); }
+    if let Some(d) = is_dark {
+        doc["tui"]["theme"]["is_dark"] = toml_edit::value(d);
+    }
 
     // Ensure colors table exists and write provided keys
     {
@@ -535,10 +535,12 @@ pub fn set_custom_theme(
         if !theme_tbl.contains_key("colors") {
             theme_tbl.insert("colors", It::Table(toml_edit::Table::new()));
         }
-    let colors_tbl = theme_tbl["colors"].as_table_mut().unwrap();
+        let colors_tbl = theme_tbl["colors"].as_table_mut().unwrap();
         macro_rules! set_opt {
             ($key:ident) => {
-                if let Some(ref v) = colors.$key { colors_tbl.insert(stringify!($key), toml_edit::value(v.clone())); }
+                if let Some(ref v) = colors.$key {
+                    colors_tbl.insert(stringify!($key), toml_edit::value(v.clone()));
+                }
             };
         }
         set_opt!(primary);
@@ -877,14 +879,10 @@ pub fn set_auto_drive_settings(
 
     doc["auto_drive"]["review_enabled"] = toml_edit::value(settings.review_enabled);
     doc["auto_drive"]["agents_enabled"] = toml_edit::value(settings.agents_enabled);
-    doc["auto_drive"]["qa_automation_enabled"] =
-        toml_edit::value(settings.qa_automation_enabled);
-    doc["auto_drive"]["cross_check_enabled"] =
-        toml_edit::value(settings.cross_check_enabled);
-    doc["auto_drive"]["observer_enabled"] =
-        toml_edit::value(settings.observer_enabled);
-    doc["auto_drive"]["coordinator_routing"] =
-        toml_edit::value(settings.coordinator_routing);
+    doc["auto_drive"]["qa_automation_enabled"] = toml_edit::value(settings.qa_automation_enabled);
+    doc["auto_drive"]["cross_check_enabled"] = toml_edit::value(settings.cross_check_enabled);
+    doc["auto_drive"]["observer_enabled"] = toml_edit::value(settings.observer_enabled);
+    doc["auto_drive"]["coordinator_routing"] = toml_edit::value(settings.coordinator_routing);
     doc["auto_drive"]["model"] = toml_edit::value(settings.model.trim());
     doc["auto_drive"]["model_reasoning_effort"] = toml_edit::value(
         settings
@@ -955,10 +953,7 @@ pub fn set_github_check_on_push(code_home: &Path, enabled: bool) -> anyhow::Resu
 }
 
 /// Persist `github.actionlint_on_patch = <enabled>`.
-pub fn set_github_actionlint_on_patch(
-    code_home: &Path,
-    enabled: bool,
-) -> anyhow::Result<()> {
+pub fn set_github_actionlint_on_patch(code_home: &Path, enabled: bool) -> anyhow::Result<()> {
     let config_path = code_home.join(CONFIG_TOML_FILE);
     let read_path = resolve_code_path_for_read(code_home, Path::new(CONFIG_TOML_FILE));
     let mut doc = match std::fs::read_to_string(&read_path) {
@@ -1060,12 +1055,17 @@ pub fn set_project_access_mode(
         .and_then(|i| i.as_table())
         .is_none();
     if needs_proj_table {
-        projects_tbl.insert(project_key.as_str(), TomlItem::Table(toml_edit::Table::new()));
+        projects_tbl.insert(
+            project_key.as_str(),
+            TomlItem::Table(toml_edit::Table::new()),
+        );
     }
     let proj_tbl = projects_tbl
         .get_mut(project_key.as_str())
         .and_then(|i| i.as_table_mut())
-        .ok_or_else(|| anyhow::anyhow!(format!("failed to create projects.{} table", project_key)))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(format!("failed to create projects.{} table", project_key))
+        })?;
 
     // Write fields
     proj_tbl.insert(
@@ -1143,7 +1143,9 @@ pub fn add_project_allowed_command(
     let project_tbl = projects_tbl
         .get_mut(project_key.as_str())
         .and_then(|i| i.as_table_mut())
-        .ok_or_else(|| anyhow::anyhow!(format!("failed to create projects.{} table", project_key)))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(format!("failed to create projects.{} table", project_key))
+        })?;
 
     let mut argv_array = TomlArray::new();
     for arg in command {
@@ -1200,13 +1202,17 @@ pub fn add_project_allowed_command(
 
 /// List MCP servers from `CODEX_HOME/config.toml`.
 /// Returns `(enabled, disabled)` lists of `(name, McpServerConfig)`.
-pub fn list_mcp_servers(code_home: &Path) -> anyhow::Result<(
+pub fn list_mcp_servers(
+    code_home: &Path,
+) -> anyhow::Result<(
     Vec<(String, McpServerConfig)>,
     Vec<(String, McpServerConfig)>,
 )> {
     let read_path = resolve_code_path_for_read(code_home, Path::new(CONFIG_TOML_FILE));
     let doc_str = std::fs::read_to_string(&read_path).unwrap_or_default();
-    let doc = doc_str.parse::<DocumentMut>().unwrap_or_else(|_| DocumentMut::new());
+    let doc = doc_str
+        .parse::<DocumentMut>()
+        .unwrap_or_else(|_| DocumentMut::new());
 
     fn table_to_list(tbl: &toml_edit::Table) -> Vec<(String, McpServerConfig)> {
         let mut out = Vec::new();
@@ -1222,30 +1228,28 @@ pub fn list_mcp_servers(code_home: &Path) -> anyhow::Result<(
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let env = t
-                        .get("env")
-                        .and_then(|v| {
-                            if let Some(tbl) = v.as_inline_table() {
-                                Some(
-                                    tbl.iter()
-                                        .filter_map(|(k, v)| {
-                                            v.as_str().map(|s| (k.to_string(), s.to_string()))
-                                        })
-                                        .collect::<HashMap<_, _>>(),
-                                )
-                            } else if let Some(table) = v.as_table() {
-                                Some(
-                                    table
-                                        .iter()
-                                        .filter_map(|(k, v)| {
-                                            v.as_str().map(|s| (k.to_string(), s.to_string()))
-                                        })
-                                        .collect::<HashMap<_, _>>(),
-                                )
-                            } else {
-                                None
-                            }
-                        });
+                    let env = t.get("env").and_then(|v| {
+                        if let Some(tbl) = v.as_inline_table() {
+                            Some(
+                                tbl.iter()
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|s| (k.to_string(), s.to_string()))
+                                    })
+                                    .collect::<HashMap<_, _>>(),
+                            )
+                        } else if let Some(table) = v.as_table() {
+                            Some(
+                                table
+                                    .iter()
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|s| (k.to_string(), s.to_string()))
+                                    })
+                                    .collect::<HashMap<_, _>>(),
+                            )
+                        } else {
+                            None
+                        }
+                    });
 
                     McpServerTransportConfig::Stdio {
                         command: command.to_string(),
@@ -1271,9 +1275,7 @@ pub fn list_mcp_servers(code_home: &Path) -> anyhow::Result<(
                     .and_then(|v| {
                         v.as_float()
                             .map(|f| Duration::try_from_secs_f64(f).ok())
-                            .or_else(|| {
-                                Some(v.as_integer().map(|i| Duration::from_secs(i as u64)))
-                            })
+                            .or_else(|| Some(v.as_integer().map(|i| Duration::from_secs(i as u64))))
                     })
                     .flatten()
                     .or_else(|| {
@@ -1287,9 +1289,7 @@ pub fn list_mcp_servers(code_home: &Path) -> anyhow::Result<(
                     .and_then(|v| {
                         v.as_float()
                             .map(|f| Duration::try_from_secs_f64(f).ok())
-                            .or_else(|| {
-                                Some(v.as_integer().map(|i| Duration::from_secs(i as u64)))
-                            })
+                            .or_else(|| Some(v.as_integer().map(|i| Duration::from_secs(i as u64))))
                     })
                     .flatten();
 
@@ -1325,13 +1325,12 @@ pub fn list_mcp_servers(code_home: &Path) -> anyhow::Result<(
 
 /// Add or update an MCP server under `[mcp_servers.<name>]`. If the same
 /// server exists under `mcp_servers_disabled`, it will be removed from there.
-pub fn add_mcp_server(
-    code_home: &Path,
-    name: &str,
-    cfg: McpServerConfig,
-) -> anyhow::Result<()> {
+pub fn add_mcp_server(code_home: &Path, name: &str, cfg: McpServerConfig) -> anyhow::Result<()> {
     // Validate server name for safety and compatibility with MCP tool naming.
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(anyhow::anyhow!(
             "invalid server name '{}': must match ^[a-zA-Z0-9_-]+$",
             name
@@ -1387,7 +1386,10 @@ pub fn add_mcp_server(
     }
 
     if let Some(duration) = startup_timeout_sec {
-        server_tbl.insert("startup_timeout_sec", toml_edit::value(duration.as_secs_f64()));
+        server_tbl.insert(
+            "startup_timeout_sec",
+            toml_edit::value(duration.as_secs_f64()),
+        );
     }
     if let Some(duration) = tool_timeout_sec {
         server_tbl.insert("tool_timeout_sec", toml_edit::value(duration.as_secs_f64()));
@@ -1411,11 +1413,7 @@ pub fn add_mcp_server(
 
 /// Enable/disable an MCP server by moving it between `[mcp_servers]` and
 /// `[mcp_servers_disabled]`. Returns `true` if a change was made.
-pub fn set_mcp_server_enabled(
-    code_home: &Path,
-    name: &str,
-    enabled: bool,
-) -> anyhow::Result<bool> {
+pub fn set_mcp_server_enabled(code_home: &Path, name: &str, enabled: bool) -> anyhow::Result<bool> {
     let config_path = code_home.join(CONFIG_TOML_FILE);
     let read_path = resolve_code_path_for_read(code_home, Path::new(CONFIG_TOML_FILE));
     let mut doc = match std::fs::read_to_string(&read_path) {
@@ -1514,9 +1512,7 @@ fn legacy_code_home_dir() -> Option<PathBuf> {
     #[cfg(not(test))]
     {
         static LEGACY: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-        LEGACY
-            .get_or_init(compute_legacy_code_home_dir)
-            .clone()
+        LEGACY.get_or_init(compute_legacy_code_home_dir).clone()
     }
 }
 
