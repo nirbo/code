@@ -271,7 +271,7 @@ const AGENT_MODEL_SPECS: &[AgentModelSpec] = &[
         model_args: &["--model", "glm-4.7"],
         description: "Reasoning model from Z.AI; strong alternative for complex planning and cross-checking.",
         enabled_by_default: true,
-        aliases: &["glm", "glm4", "glm-4"],
+        aliases: &["glm47", "glm4.7", "glm-4-7"],
         gating_env: None,
         is_frontline: false,
     },
