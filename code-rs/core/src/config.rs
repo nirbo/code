@@ -1073,14 +1073,14 @@ impl Config {
         let model_provider_id = model_provider
             .clone()
             .or(config_profile.model_provider.clone())
-            .or(cfg.model_provider.clone())
-            .unwrap_or_else(|| {
+            .or_else(|| {
                 if model.eq_ignore_ascii_case("glm-4.7") {
-                    "zai".to_string()
+                    Some("zai".to_string())
                 } else {
-                    "openai".to_string()
+                    cfg.model_provider.clone()
                 }
-            });
+            })
+            .unwrap_or_else(|| "openai".to_string());
 
         let model_provider = model_providers
             .get(&model_provider_id)

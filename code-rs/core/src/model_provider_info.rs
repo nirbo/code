@@ -282,7 +282,16 @@ impl ModelProviderInfo {
                     Ok(Some(CodexAuth::from_api_key(&key)))
                 }
             }
-            Ok(None) => { if self.env_key.as_deref() == Some("Z_AI_API_KEY") { Err(crate::error::CodexErr::EnvVar(crate::error::EnvVarError { var: "Z_AI_API_KEY".to_string(), instructions: self.env_key_instructions.clone() })) } else { Ok(auth.clone()) } }
+            Ok(None) => {
+                if self.env_key.as_deref() == Some("Z_AI_API_KEY") {
+                    Err(crate::error::CodexErr::EnvVar(crate::error::EnvVarError {
+                        var: "Z_AI_API_KEY".to_string(),
+                        instructions: self.env_key_instructions.clone(),
+                    }))
+                } else {
+                    Ok(auth.clone())
+                }
+            }
             Err(err) => {
                 if auth.is_some() {
                     Ok(auth.clone())
