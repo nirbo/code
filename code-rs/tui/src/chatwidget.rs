@@ -9453,7 +9453,7 @@ impl ChatWidget<'_> {
             let cell_kind = cell.kind();
             if cell_kind == HistoryCellType::BackgroundEvent {
                 debug_assert!(
-                    tag == "background",
+                    tag == "background" || tag == "prelude" || tag == "system",
                     "Background events must use the background helper (tag={})",
                     tag
                 );
@@ -9748,7 +9748,7 @@ impl ChatWidget<'_> {
             let cell_kind = cell.kind();
             if cell_kind == HistoryCellType::BackgroundEvent {
                 debug_assert!(
-                    tag == "background",
+                    tag == "background" || tag == "prelude" || tag == "system",
                     "Background events must use the background helper (tag={})",
                     tag
                 );
